@@ -223,6 +223,7 @@ stackoverflow-chatbot/
 ### src/main.py
 - `--index` でインデックス構築
 - `--query` で検索 + 回答生成
+- `--interactive` で対話モード
 
 ## メタデータ構造（実装済み）
 
