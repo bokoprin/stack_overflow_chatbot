@@ -1,0 +1,6 @@
+requests
+beautifulsoup4
+chromadb
+llama-index
+sentence-transformers
+python-dotenv
