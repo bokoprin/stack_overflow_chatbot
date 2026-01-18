@@ -16,6 +16,7 @@ class StackOverflowIndexer:
         persist_dir="vector_db",
         collection_name="stack_overflow",
         batch_size=16,
+        device=None,
     ):
         self.embedding_model_name = embedding_model_name or os.getenv(
             "EMBEDDING_MODEL", "BAAI/bge-m3"
@@ -23,7 +24,11 @@ class StackOverflowIndexer:
         self.persist_dir = persist_dir
         self.collection_name = collection_name
         self.batch_size = batch_size
-        self.model = SentenceTransformer(self.embedding_model_name)
+        self.device = device or os.getenv("EMBEDDING_DEVICE")
+        if self.device:
+            self.model = SentenceTransformer(self.embedding_model_name, device=self.device)
+        else:
+            self.model = SentenceTransformer(self.embedding_model_name)
 
     @staticmethod
     def load_json(path):
@@ -51,7 +56,7 @@ class StackOverflowIndexer:
                     "question_id": question_id,
                     "chunk_type": "question",
                     "chunk_index": 0,
-                    "tags": record.get("tags", []),
+                    "tags": ",".join(record.get("tags", [])),
                     "title": title,
                     "link": record.get("link"),
                 },
@@ -75,7 +80,11 @@ class StackOverflowIndexer:
                 chunks.append(answer_chunk)
         return chunks
 
-    def build_index(self, chunks, reset=False):
+    def build_index(self, chunks, reset=False, start=None, end=None):
+        if start is not None or end is not None:
+            start = start or 0
+            end = end if end is not None else len(chunks)
+            chunks = chunks[start:end]
         client = chromadb.PersistentClient(path=self.persist_dir)
         if reset:
             try:
@@ -128,6 +137,8 @@ def main():
     parser.add_argument("--collection", default=os.getenv("CHROMA_COLLECTION", "stack_overflow"))
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--reset", action="store_true", help="Reset the collection.")
+    parser.add_argument("--start", type=int, default=None, help="Start index for chunk slicing.")
+    parser.add_argument("--end", type=int, default=None, help="End index for chunk slicing.")
     args = parser.parse_args()
 
     input_path = Path(args.input) if args.input else find_latest_json()
@@ -138,7 +149,7 @@ def main():
         batch_size=args.batch_size,
     )
     chunks = indexer.create_chunks(records)
-    count = indexer.build_index(chunks, reset=args.reset)
+    count = indexer.build_index(chunks, reset=args.reset, start=args.start, end=args.end)
     print(f"indexed chunks: {count}")
 
 

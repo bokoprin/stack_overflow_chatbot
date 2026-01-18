@@ -27,10 +27,30 @@ stackoverflow-chatbot/
 
 セットアップ手順は `documents/setup_guide.md` を参照してください。
 
+## 使い方
+
+データ取得 → インデックス構築 → 質問の順で進めます。
+
+```bash
+# データ取得
+venv/bin/python src/data_loader.py --tag python --max-questions 100
+
+# インデックス構築
+venv/bin/python src/indexer.py --reset
+
+# 単発の質問
+venv/bin/python src/main.py --query "リストを逆順にするには？"
+
+# 対話モード
+venv/bin/python src/main.py --interactive
+
+# インデックス状態の確認
+venv/bin/python check_indexer_status.py
+```
+
 ## 現状
 
-- Phase 0: 環境準備中
-- Phase 1-3（検索・回答生成）に進む前の準備段階
+- Phase 1-3（検索・回答生成・対話モード）まで実装済み
 
 ## ライセンス
 

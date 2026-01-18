@@ -20,6 +20,9 @@ class StackOverflowDataLoader:
         order="desc",
         sort="votes",
         timeout=30,
+        request_delay=0.1,
+        max_retries=5,
+        retry_wait=10,
     ):
         self.api_key = api_key
         self.site = site
@@ -29,6 +32,9 @@ class StackOverflowDataLoader:
         self.order = order
         self.sort = sort
         self.timeout = timeout
+        self.request_delay = request_delay
+        self.max_retries = max_retries
+        self.retry_wait = retry_wait
         self.base_url = "https://api.stackexchange.com/2.3"
         self.session = requests.Session()
 
@@ -38,16 +44,33 @@ class StackOverflowDataLoader:
         params["site"] = self.site
         if self.api_key:
             params["key"] = self.api_key
-        response = self.session.get(url, params=params, timeout=self.timeout)
-        response.raise_for_status()
-        data = response.json()
-        if "error_id" in data:
-            message = data.get("error_message", "unknown error")
-            raise RuntimeError(f"Stack Exchange API error {data['error_id']}: {message}")
-        backoff = data.get("backoff")
-        if backoff:
-            time.sleep(backoff)
-        return data
+        for attempt in range(self.max_retries + 1):
+            response = self.session.get(url, params=params, timeout=self.timeout)
+            if response.status_code == 429:
+                retry_after = response.headers.get("Retry-After")
+                wait_time = self.retry_wait
+                if retry_after and retry_after.isdigit():
+                    wait_time = int(retry_after)
+                time.sleep(wait_time)
+                continue
+
+            try:
+                data = response.json()
+            except ValueError:
+                data = {}
+
+            backoff = data.get("backoff")
+            if backoff:
+                time.sleep(backoff)
+
+            if response.status_code >= 400 or "error_id" in data:
+                message = data.get("error_message", response.text)
+                raise RuntimeError(f"Stack Exchange API error: {message}")
+
+            time.sleep(self.request_delay)
+            return data
+
+        raise RuntimeError("Stack Exchange API error: exceeded retry limit")
 
     def fetch_questions(self):
         questions = []
@@ -194,7 +217,6 @@ def main():
     loader = StackOverflowDataLoader(
         api_key=os.getenv("STACK_OVERFLOW_API_KEY"),
         site=args.site,
-        tag=args.tag,
         pagesize=args.pagesize,
         max_questions=args.max_questions,
         order=args.order,
