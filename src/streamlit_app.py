@@ -1,5 +1,9 @@
+import json
 import os
+import re
 import time
+from datetime import datetime
+from pathlib import Path
 
 import streamlit as st
 from streamlit.runtime.scriptrunner_utils.script_run_context import get_script_run_ctx
@@ -28,6 +32,22 @@ def _format_source_line(index: int, item: dict) -> str:
     if metadata.get("link"):
         line += f" link={metadata.get('link')}"
     return line
+
+
+def _log_perf(payload: dict) -> None:
+    try:
+        log_path = Path("logs") / "perf.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        payload["timestamp"] = datetime.now().isoformat(timespec="seconds")
+        log_path.write_text("", encoding="utf-8") if not log_path.exists() else None
+        with log_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def _contains_japanese(text: str) -> bool:
+    return re.search(r"[\u3040-\u30ff\u4e00-\u9fff]", text or "") is not None
 
 
 def main():
@@ -99,10 +119,35 @@ def main():
 
                 sources = [_format_source_line(i, item) for i, item in enumerate(results, start=1)]
                 timing = f"retrieval={t_retrieval:.2f}s, llm={t_llm:.2f}s, total={time.perf_counter() - t0:.2f}s"
+                _log_perf(
+                    {
+                        "query": user_text,
+                        "top_k": top_k,
+                        "retrieval_sec": round(t_retrieval, 3),
+                        "llm_sec": round(t_llm, 3),
+                        "total_sec": round(time.perf_counter() - t0, 3),
+                        "collection": collection,
+                        "persist_dir": persist_dir,
+                        "ollama_host": host,
+                        "ollama_model": model,
+                        "answer_japanese": _contains_japanese(answer),
+                    }
+                )
             except Exception as exc:
                 answer = f"エラー: {exc}"
                 sources = []
                 timing = None
+                _log_perf(
+                    {
+                        "query": user_text,
+                        "top_k": top_k,
+                        "collection": collection,
+                        "persist_dir": persist_dir,
+                        "ollama_host": host,
+                        "ollama_model": model,
+                        "error": str(exc),
+                    }
+                )
 
             st.markdown(answer)
             if show_timing and timing:
