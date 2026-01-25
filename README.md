@@ -44,6 +44,9 @@ venv/bin/python src/main.py --query "リストを逆順にするには？"
 # 対話モード
 venv/bin/python src/main.py --interactive
 
+# ブラウザUI（Streamlit）
+venv/bin/python -m streamlit run src/streamlit_app.py
+
 # インデックス状態の確認
 venv/bin/python check_indexer_status.py
 ```

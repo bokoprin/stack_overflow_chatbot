@@ -4,3 +4,4 @@ chromadb
 llama-index
 sentence-transformers
 python-dotenv
+streamlit
