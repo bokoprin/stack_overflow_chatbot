@@ -1,0 +1,24 @@
+flowchart TD
+  A["評価クエリセット<br/>eval_samples.md"] --> B{"クエリ種別"}
+  B -->|title| C1["クエリ生成"]
+  B -->|body| C2["クエリ生成"]
+  B -->|paraphrase| C3["クエリ生成"]
+  C1 --> D["Retriever<br/>ChromaDB + bge-m3"]
+  C2 --> D
+  C3 --> D
+  D --> E["Top-k取得<br/>chunks + metadata"]
+  E --> F{"GoldがTop-kに<br/>含まれるか"}
+  F -->|YES| G["Retrieval成功"]
+  F -->|NO| H["Retrieval失敗"]
+  E --> I["Context整形<br/>引用しやすくする"]
+  I --> J["LLM回答<br/>Ollama qwen3:14b"]
+  G --> K["評価へ"]
+  H --> K
+  J --> K
+  K --> L["Answer採点<br/>LLM Judge 0-3"]
+  K --> M["チェック<br/>引用あり/Top-k内"]
+  L --> N["集計"]
+  M --> N
+  G --> N
+  H --> N
+  N --> O["結果<br/>Hit@k, MRR@k<br/>平均スコア<br/>引用整合率<br/>レイテンシ"]
