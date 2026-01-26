@@ -21,6 +21,12 @@ venv/bin/python -m streamlit run src/streamlit_app.py --server.address 0.0.0.0 -
 kill $(cat logs/streamlit.pid)
 ```
 
+### 再起動（起動済みなら再起動、未起動なら起動）
+
+```bash
+bash scripts/restart_streamlit.sh
+```
+
 ### PIDファイル更新（必要時のみ）
 
 ```bash
