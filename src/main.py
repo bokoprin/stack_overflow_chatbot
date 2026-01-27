@@ -54,6 +54,7 @@ def run_query(args):
     )
     llm_client = LLMClient()
     query_processor = QueryProcessor(
+        strategy=args.strategy,
         enable_expansion=args.enable_expansion,
         dynamic_top_k=args.dynamic_top_k,
     )
@@ -69,6 +70,7 @@ def run_interactive(args):
     )
     llm_client = LLMClient()
     query_processor = QueryProcessor(
+        strategy=args.strategy,
         enable_expansion=args.enable_expansion,
         dynamic_top_k=args.dynamic_top_k,
     )
@@ -104,6 +106,7 @@ def main():
     parser.add_argument("--accepted-only", action="store_true")
     parser.add_argument("--parent-child", action="store_true", help="Enable parent-child search.")
     parser.add_argument("--no-parent-child", action="store_true")
+    parser.add_argument("--strategy", default=None, help="Override QUERY_STRATEGY")
     parser.add_argument("--enable-expansion", action="store_true")
     parser.add_argument("--no-expansion", action="store_true")
     parser.add_argument("--dynamic-top-k", action="store_true")

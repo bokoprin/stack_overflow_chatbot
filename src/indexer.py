@@ -8,6 +8,7 @@ import chromadb
 from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
 
+from domain_dict import normalize_terms
 from preprocessor import QAPreprocessor, detect_language, strip_html
 
 class StackOverflowIndexer:
@@ -30,6 +31,7 @@ class StackOverflowIndexer:
             self.model = SentenceTransformer(self.embedding_model_name, device=self.device)
         else:
             self.model = SentenceTransformer(self.embedding_model_name)
+        self.is_e5 = "e5" in self.embedding_model_name.lower()
 
     @staticmethod
     def load_json(path):
@@ -49,6 +51,7 @@ class StackOverflowIndexer:
             if not question_text:
                 body = record.get("body", "")
                 question_text = strip_html(f"{title}\n\n{body}".strip())
+            question_text = normalize_terms(question_text)
             tags = record.get("tags", [])
             tags_text = ",".join(tags)
             language = record.get("language") or detect_language(question_text)
@@ -70,6 +73,7 @@ class StackOverflowIndexer:
                 accepted_text = accepted_answer.get("body_text") or strip_html(
                     accepted_answer.get("body", "")
                 )
+                accepted_text = normalize_terms(accepted_text)
                 accepted_score = accepted_answer.get("score")
                 accepted_id = accepted_answer.get("answer_id")
 
@@ -99,9 +103,53 @@ class StackOverflowIndexer:
                 }
             )
 
+            # question-only chunk (dual index)
+            chunks.append(
+                {
+                    "id": f"qonly_{question_id}",
+                    "text": question_text,
+                    "metadata": {
+                        "question_id": question_id,
+                        "chunk_type": "question_only",
+                        "chunk_index": 0,
+                        "tags": tags_text,
+                        "title": title,
+                        "link": record.get("link"),
+                        "language": language,
+                        "question_score": question_score,
+                    },
+                }
+            )
+
+            # answer-only chunk (accepted/top answer)
+            if accepted_text:
+                answer_only_max = int(os.getenv("ANSWER_ONLY_MAX_CHARS", "1200"))
+                answer_only_text = accepted_text[:answer_only_max]
+                chunks.append(
+                    {
+                        "id": f"aonly_{question_id}",
+                        "text": answer_only_text,
+                        "metadata": {
+                            "question_id": question_id,
+                            "chunk_type": "answer_only",
+                            "chunk_index": 0,
+                            "tags": tags_text,
+                            "title": title,
+                            "link": record.get("link"),
+                            "language": language,
+                            "score": accepted_score,
+                            "is_accepted": bool(
+                                accepted_answer and accepted_answer.get("is_accepted")
+                            ),
+                            "answer_id": accepted_id,
+                        },
+                    }
+                )
+
             answer_max_chars = int(os.getenv("ANSWER_CHUNK_MAX_CHARS", "1200"))
             for ans_idx, answer in enumerate(answers, start=1):
                 answer_text = answer.get("body_text") or strip_html(answer.get("body", ""))
+                answer_text = normalize_terms(answer_text)
                 segments = _semantic_split(answer_text, max_chars=answer_max_chars)
                 for seg_idx, segment in enumerate(segments, start=1):
                     chunks.append(
@@ -147,7 +195,7 @@ class StackOverflowIndexer:
             ids = [item["id"] for item in batch]
             metadatas = [item["metadata"] for item in batch]
             embeddings = self.model.encode(
-                texts,
+                _apply_embedding_prefix(texts, self.is_e5, prefix="passage:"),
                 batch_size=self.batch_size,
                 normalize_embeddings=True,
             )
@@ -220,6 +268,18 @@ def _semantic_split(text, max_chars=1200, min_chars=120):
         else:
             final[-1] = f"{final[-1]} {segment}".strip()
     return final
+
+
+def _apply_embedding_prefix(texts, is_e5, prefix="passage:"):
+    if not is_e5:
+        return texts
+    prefixed = []
+    for text in texts:
+        if text:
+            prefixed.append(f"{prefix} {text}")
+        else:
+            prefixed.append(prefix)
+    return prefixed
 
 
 def main():

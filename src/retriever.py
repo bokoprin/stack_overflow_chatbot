@@ -19,13 +19,15 @@ class Retriever:
             "EMBEDDING_MODEL", "BAAI/bge-m3"
         )
         self.model = SentenceTransformer(self.embedding_model_name)
+        self.is_e5 = "e5" in self.embedding_model_name.lower()
         self.client = chromadb.PersistentClient(path=self.persist_dir)
         self.collection = self.client.get_or_create_collection(
             name=self.collection_name, metadata={"hnsw:space": "cosine"}
         )
 
     def search(self, query, top_k=5, where=None):
-        embedding = self.model.encode(query, normalize_embeddings=True).tolist()
+        query_text = _apply_query_prefix(query, self.is_e5)
+        embedding = self.model.encode(query_text, normalize_embeddings=True).tolist()
         results = self.collection.query(
             query_embeddings=[embedding],
             n_results=top_k,
@@ -76,3 +78,11 @@ def _normalize_where(where):
     if len(where) == 1 or any(k.startswith("$") for k in where.keys()):
         return where
     return {"$and": [{k: v} for k, v in where.items()]}
+
+
+def _apply_query_prefix(query, is_e5):
+    if not is_e5:
+        return query
+    if not query:
+        return "query:"
+    return f"query: {query}"

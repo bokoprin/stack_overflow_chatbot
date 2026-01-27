@@ -40,15 +40,33 @@ class SearchEngine:
         )
 
         where = {}
-        if self.parent_child:
+        if self.parent_child and not self.query_processor.uses_dual():
             where["chunk_type"] = "qa_parent"
         if filters.get("language"):
             where["language"] = filters["language"]
 
-        filter_fn = _build_filter_fn(filters, require_parent=self.parent_child)
+        require_parent = self.parent_child and not self.query_processor.uses_dual()
+        filter_fn = _build_filter_fn(filters, require_parent=require_parent)
 
         results = []
-        if self.query_processor.uses_multistage():
+        if self.query_processor.uses_dual():
+            results = _dual_search(
+                self.retriever,
+                queries,
+                effective_top_k,
+                filter_fn,
+                where or None,
+            )
+        elif self.query_processor.uses_tag_split() and filters.get("tags"):
+            results = _tag_split_search(
+                self.retriever,
+                queries,
+                effective_top_k,
+                filter_fn,
+                where or None,
+                filters,
+            )
+        elif self.query_processor.uses_multistage():
             results = _multistage_search(
                 queries,
                 self.retriever,
@@ -75,7 +93,9 @@ class SearchEngine:
                 )
                 results = _apply_filter_fn(results, filter_fn)
 
-        if self.parent_child:
+        if self.query_processor.uses_dual():
+            pass
+        elif self.parent_child:
             if self.query_processor.uses_mmr():
                 results = _apply_mmr(results, effective_top_k)
             results = _expand_children(self.retriever, results, filters)
@@ -202,3 +222,76 @@ def _apply_mmr(results, top_k):
     lambda_param = float(os.getenv("MMR_LAMBDA", "0.7"))
     max_candidates = int(os.getenv("MMR_MAX_CANDIDATES", "30"))
     return mmr_select(results, top_k=top_k, lambda_param=lambda_param, max_candidates=max_candidates)
+
+
+def _dual_search(retriever, queries, top_k, filter_fn, where):
+    q_where = _merge_where(where, {"chunk_type": "question_only"})
+    a_where = _merge_where(where, {"chunk_type": "answer_only"})
+    q_results = []
+    a_results = []
+    for query in queries:
+        q_results.extend(retriever.search(query, top_k=top_k, where=q_where))
+        a_results.extend(retriever.search(query, top_k=top_k, where=a_where))
+
+    q_results = _apply_filter_fn(q_results, filter_fn)
+    a_results = _apply_filter_fn(a_results, filter_fn)
+
+    q_weight = float(os.getenv("DUAL_Q_WEIGHT", "0.55"))
+    a_weight = float(os.getenv("DUAL_A_WEIGHT", "0.45"))
+
+    merged = {}
+    for item in q_results:
+        merged[item["id"]] = _weighted_item(item, q_weight)
+    for item in a_results:
+        if item["id"] in merged:
+            merged[item["id"]] = _merge_weighted(merged[item["id"]], _weighted_item(item, a_weight))
+        else:
+            merged[item["id"]] = _weighted_item(item, a_weight)
+    return sorted(merged.values(), key=lambda x: x.get("weighted_score", 0.0), reverse=True)[:top_k]
+
+
+def _tag_split_search(retriever, queries, top_k, filter_fn, where, filters):
+    tag_filters = dict(filters)
+    tag_filters["tags"] = filters.get("tags")
+    strict_filter_fn = _build_filter_fn(tag_filters, require_parent=False)
+
+    tag_results = []
+    for query in queries:
+        results = retriever.search(query, top_k=top_k, where=where)
+        tag_results.extend(_apply_filter_fn(results, strict_filter_fn))
+
+    if len(tag_results) >= top_k:
+        return tag_results[:top_k]
+
+    global_results = []
+    for query in queries:
+        global_results.extend(retriever.search(query, top_k=top_k, where=where))
+    global_results = _apply_filter_fn(global_results, filter_fn)
+
+    merged = {}
+    for item in global_results:
+        merged[item["id"]] = _weighted_item(item, 1.0)
+    for item in tag_results:
+        merged[item["id"]] = _weighted_item(item, 1.2)
+
+    ranked = sorted(merged.values(), key=lambda x: x.get("weighted_score", 0.0), reverse=True)
+    return ranked[:top_k]
+
+
+def _weighted_item(item, weight):
+    score = _base_score(item) * weight
+    payload = dict(item)
+    payload["weighted_score"] = score
+    return payload
+
+
+def _merge_weighted(a, b):
+    return a if a.get("weighted_score", 0.0) >= b.get("weighted_score", 0.0) else b
+
+
+def _merge_where(where, extra):
+    if not where:
+        return extra
+    if len(where) == 1 or any(k.startswith("$") for k in where.keys()):
+        return {"$and": [where, extra]}
+    return {"$and": [{k: v} for k, v in where.items()] + [{k: v} for k, v in extra.items()]}

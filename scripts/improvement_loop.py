@@ -229,7 +229,14 @@ def evaluate_strategy(
 
         query_ja = item["query_ja"]
         query_en = item.get("query_en_translated") or item.get("query_en")
-        search_query, results = search_engine.search(query_ja, top_k=top_k, fallback_en=query_en)
+        filters = {}
+        if "tag" in strategy:
+            filters["tags"] = item.get("tags") or []
+        if "ja_only" in strategy:
+            filters["language"] = "ja"
+        search_query, results = search_engine.search(
+            query_ja, top_k=top_k, fallback_en=query_en, filters=filters
+        )
 
         rank = None
         for r_idx, res in enumerate(results, start=1):
@@ -334,7 +341,10 @@ def main():
             "baseline,translate,hybrid,translate_hybrid,translate_rerank,translate_hybrid_rerank,"
             "translate_hybrid_mmr,translate_hybrid_mmr_rerank,"
             "translate_hybrid_mmr_rerank_multi,translate_hybrid_mmr_rerank_llm_expand,"
-            "translate_hybrid_mmr_rerank_llm_expand_compress"
+            "translate_hybrid_mmr_rerank_llm_expand_compress,"
+            "translate_hybrid_mmr_rerank_llm_expand_compress_fusion,"
+            "translate_hybrid_mmr_rerank_llm_expand_compress_fusion_tag_split,"
+            "translate_hybrid_mmr_rerank_llm_expand_compress_fusion_tag_split_dual"
         ),
     )
     parser.add_argument("--eval-model", default="qwen3:8b")

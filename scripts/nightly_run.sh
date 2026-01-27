@@ -124,20 +124,61 @@ start_or_wait_indexer() {
 run_eval_loop() {
   local eval_model="${EVAL_MODEL:-qwen3:8b}"
   local translate_model="${TRANSLATE_MODEL:-qwen3:8b}"
-  local strategies="${EVAL_STRATEGIES:-baseline,translate,hybrid,translate_hybrid,translate_rerank,translate_hybrid_rerank,translate_hybrid_mmr,translate_hybrid_mmr_rerank,translate_hybrid_mmr_rerank_multi,translate_hybrid_mmr_rerank_llm_expand,translate_hybrid_mmr_rerank_llm_expand_compress}"
+  local strategies="${EVAL_STRATEGIES:-baseline,translate,hybrid,translate_hybrid,translate_rerank,translate_hybrid_rerank,translate_hybrid_mmr,translate_hybrid_mmr_rerank,translate_hybrid_mmr_rerank_multi,translate_hybrid_mmr_rerank_llm_expand,translate_hybrid_mmr_rerank_llm_expand_compress,translate_hybrid_mmr_rerank_llm_expand_compress_fusion,translate_hybrid_mmr_rerank_llm_expand_compress_fusion_tag_split,translate_hybrid_mmr_rerank_llm_expand_compress_fusion_tag_split_dual}"
   local size="${EVAL_SIZE:-500}"
   local top_k="${EVAL_TOP_K:-5}"
   local limit_hours="${EVAL_TIME_LIMIT_HOURS:-7}"
 
-  log "starting improvement loop"
-  "$ROOT_DIR/venv/bin/python" "$ROOT_DIR/scripts/improvement_loop.py" \
-    --size "$size" \
-    --top-k "$top_k" \
-    --time-limit-hours "$limit_hours" \
-    --strategies "$strategies" \
-    --eval-model "$eval_model" \
-    --translate-model "$translate_model" \
-    >> "$LOG_DIR/improvement_loop_run.log" 2>&1
+  local embedding_models="${EMBEDDING_MODELS:-}"
+  if [[ -z "$embedding_models" ]]; then
+    embedding_models="${EMBEDDING_MODEL:-BAAI/bge-m3},intfloat/multilingual-e5-base"
+  fi
+
+  local reranker_models="${CROSS_ENCODER_MODELS:-none,BAAI/bge-reranker-base}"
+
+  IFS=',' read -r -a model_list <<< "$embedding_models"
+  IFS=',' read -r -a reranker_list <<< "$reranker_models"
+  local run_id
+  run_id="$(date +%Y%m%d_%H%M%S)"
+
+  for model in "${model_list[@]}"; do
+    local clean_model
+    clean_model="$(echo "$model" | tr '/:.' '___')"
+    local collection="stack_overflow_${clean_model}"
+    log "reindex for embedding model: $model (collection=$collection)"
+    EMBEDDING_MODEL="$model" "$ROOT_DIR/venv/bin/python" "$ROOT_DIR/src/indexer.py" \
+      --reset \
+      --collection "$collection" \
+      >> "$LOG_DIR/indexer_${clean_model}.log" 2>&1 || fail "indexer failed: $model"
+
+    for reranker in "${reranker_list[@]}"; do
+      local reranker_tag
+      if [[ "$reranker" == "none" || -z "$reranker" ]]; then
+        reranker_tag="none"
+        export CROSS_ENCODER_MODEL=""
+      else
+        reranker_tag="$(echo "$reranker" | tr '/:.' '___')"
+        export CROSS_ENCODER_MODEL="$reranker"
+        log "preloading reranker: $reranker"
+        "$ROOT_DIR/venv/bin/python" - <<PY >> "$LOG_DIR/reranker_${reranker_tag}.log" 2>&1
+from sentence_transformers import CrossEncoder
+CrossEncoder("${reranker}")
+PY
+      fi
+      local output_dir="$ROOT_DIR/data/processed/eval_${run_id}_${clean_model}_${reranker_tag}"
+      log "starting improvement loop (collection=$collection, reranker=$reranker_tag)"
+      CHROMA_COLLECTION="$collection" EMBEDDING_MODEL="$model" "$ROOT_DIR/venv/bin/python" \
+        "$ROOT_DIR/scripts/improvement_loop.py" \
+        --size "$size" \
+        --top-k "$top_k" \
+        --time-limit-hours "$limit_hours" \
+        --strategies "$strategies" \
+        --eval-model "$eval_model" \
+        --translate-model "$translate_model" \
+        --output-dir "$output_dir" \
+        >> "$LOG_DIR/improvement_loop_${clean_model}_${reranker_tag}.log" 2>&1
+    done
+  done
 }
 
 log "nightly_run started"

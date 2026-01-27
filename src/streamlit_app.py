@@ -154,6 +154,9 @@ def main():
         use_mmr = st.checkbox("MMR（多様性確保）", value=False)
         use_multistage = st.checkbox("マルチステージ検索", value=False)
         use_llm_expand = st.checkbox("LLMクエリ拡張", value=False)
+        use_fusion = st.checkbox("Query Fusion", value=False)
+        use_tag_split = st.checkbox("タグ分割検索", value=False)
+        use_dual = st.checkbox("質問/回答二段インデックス", value=False)
         use_context_compress = st.checkbox("重要文抽出（圧縮）", value=False)
         translate_model = st.text_input("翻訳モデル", value=default_translate_model)
         hybrid_alpha = st.slider("ハイブリッド比率（BM25寄り）", min_value=0.0, max_value=1.0, value=default_hybrid_alpha, step=0.1)
@@ -202,6 +205,12 @@ def main():
         strategy = f"{strategy}_multi"
     if use_llm_expand and "llm_expand" not in strategy:
         strategy = f"{strategy}_llm_expand"
+    if use_fusion and "fusion" not in strategy:
+        strategy = f"{strategy}_fusion"
+    if use_tag_split and "tag_split" not in strategy:
+        strategy = f"{strategy}_tag_split"
+    if use_dual and "dual" not in strategy:
+        strategy = f"{strategy}_dual"
     os.environ["ENABLE_CONTEXT_COMPRESS"] = "true" if use_context_compress else "false"
 
     query_processor = _get_query_processor(
@@ -258,6 +267,9 @@ def main():
                         "use_mmr": use_mmr,
                         "use_multistage": use_multistage,
                         "use_llm_expand": use_llm_expand,
+                        "use_fusion": use_fusion,
+                        "use_tag_split": use_tag_split,
+                        "use_dual": use_dual,
                         "use_context_compress": use_context_compress,
                         "parent_child": parent_child,
                         "filters": filters,
@@ -290,6 +302,9 @@ def main():
                         "use_mmr": use_mmr,
                         "use_multistage": use_multistage,
                         "use_llm_expand": use_llm_expand,
+                        "use_fusion": use_fusion,
+                        "use_tag_split": use_tag_split,
+                        "use_dual": use_dual,
                         "use_context_compress": use_context_compress,
                         "parent_child": parent_child,
                         "filters": filters,

@@ -5,6 +5,7 @@ import time
 import requests
 from dotenv import load_dotenv
 
+from domain_dict import normalize_terms
 from reranker import Reranker
 
 
@@ -73,6 +74,15 @@ class QueryProcessor:
     def uses_llm_expansion(self):
         return "llm_expand" in self.strategy
 
+    def uses_fusion(self):
+        return "fusion" in self.strategy
+
+    def uses_tag_split(self):
+        return "tag_split" in self.strategy
+
+    def uses_dual(self):
+        return "dual" in self.strategy
+
     def build_search_query(self, query, fallback_en=None):
         if self.uses_translation():
             if fallback_en:
@@ -81,6 +91,7 @@ class QueryProcessor:
                 base = self.translate_ja_to_en(query)
         else:
             base = query
+        base = normalize_terms(base)
         expanded = base
         if self.enable_expansion:
             expanded = self.expand_query(base)
@@ -92,6 +103,7 @@ class QueryProcessor:
         base = query
         if self.uses_translation():
             base = fallback_en or self.translate_ja_to_en(query)
+        base = normalize_terms(base)
 
         queries = [base]
         if self.enable_expansion:
@@ -102,6 +114,11 @@ class QueryProcessor:
             llm_expanded = self.expand_query_llm(queries[-1], base_query=base)
             if llm_expanded not in queries:
                 queries.append(llm_expanded)
+        if self.uses_fusion():
+            fusion_queries = self.generate_fusion_queries(base)
+            for q in fusion_queries:
+                if q not in queries:
+                    queries.append(q)
         return queries
 
     def rerank_results(self, results, query_for_search, tag_hints=None):
@@ -179,6 +196,26 @@ class QueryProcessor:
             seen.add(token_l)
             cleaned.append(token)
         return cleaned
+
+    def generate_fusion_queries(self, query):
+        if not query:
+            return []
+        prompt = (
+            "You are generating alternate search queries for technical Q&A retrieval. "
+            "Return 3 alternative queries, each on a new line. Keep them concise.\n\n"
+            f"Query:\n{query}\n\n"
+            "Alternatives:"
+        )
+        try:
+            response = self._generate(
+                prompt,
+                system="Return only the 3 queries.",
+                options={"temperature": 0.3, "num_predict": 128},
+            )
+        except Exception:
+            return []
+        lines = [line.strip(" -\t") for line in response.splitlines() if line.strip()]
+        return lines[:3]
 
     def translate_ja_to_en(self, text):
         if not text:
