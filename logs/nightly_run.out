@@ -1,0 +1,5 @@
+[2026-01-27 21:31:49] nightly_run started
+[2026-01-27 21:31:49] disk ok: 809256448KB available
+[2026-01-27 21:31:49] ollama model present: qwen3:14b
+[2026-01-27 21:31:49] ollama model present: qwen3:8b
+[2026-01-27 21:31:49] indexer already running (pid=114752), waiting
