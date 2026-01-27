@@ -124,7 +124,7 @@ start_or_wait_indexer() {
 run_eval_loop() {
   local eval_model="${EVAL_MODEL:-qwen3:8b}"
   local translate_model="${TRANSLATE_MODEL:-qwen3:8b}"
-  local strategies="${EVAL_STRATEGIES:-baseline,translate,hybrid,translate_hybrid,translate_rerank,translate_hybrid_rerank}"
+  local strategies="${EVAL_STRATEGIES:-baseline,translate,hybrid,translate_hybrid,translate_rerank,translate_hybrid_rerank,translate_hybrid_mmr,translate_hybrid_mmr_rerank,translate_hybrid_mmr_rerank_multi,translate_hybrid_mmr_rerank_llm_expand,translate_hybrid_mmr_rerank_llm_expand_compress}"
   local size="${EVAL_SIZE:-500}"
   local top_k="${EVAL_TOP_K:-5}"
   local limit_hours="${EVAL_TIME_LIMIT_HOURS:-7}"

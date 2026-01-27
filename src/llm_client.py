@@ -26,7 +26,10 @@ class LLMClient:
                 header += f" title={metadata.get('title')}"
             if metadata.get("link"):
                 header += f" link={metadata.get('link')}"
-            block = f"{header}\n{item.get('document', '')}"
+            document = item.get("document", "")
+            if os.getenv("ENABLE_CONTEXT_COMPRESS", "false").lower() in {"1", "true", "yes", "on"}:
+                document = _compress_text(query, document)
+            block = f"{header}\n{document}"
             context_blocks.append(block)
         context_text = "\n\n".join(context_blocks) if context_blocks else "参照情報なし。"
         prompt = (
@@ -70,3 +73,39 @@ class LLMClient:
             "翻訳結果:"
         )
         return self._generate(prompt, system="日本語の翻訳結果のみを返してください。")
+
+
+def _compress_text(query, text):
+    sentences = _split_sentences(text)
+    if not sentences:
+        return text
+    max_sentences = int(os.getenv("CONTEXT_COMPRESS_SENTENCES", "3"))
+    query_tokens = _tokenize(query)
+    scored = []
+    for idx, sentence in enumerate(sentences):
+        score = _sentence_score(sentence, query_tokens)
+        scored.append((score, idx, sentence))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    top = sorted(scored[:max_sentences], key=lambda x: x[1])
+    return " ".join(item[2] for item in top)
+
+
+def _split_sentences(text):
+    if not text:
+        return []
+    parts = re.split(r"(?<=[.!?。！？])\s+", text.strip())
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _tokenize(text):
+    return set(re.findall(r"[A-Za-z0-9_]+|[ぁ-んァ-ン一-龯]+", text or ""))
+
+
+def _sentence_score(sentence, query_tokens):
+    if not query_tokens:
+        return 0.0
+    tokens = _tokenize(sentence)
+    if not tokens:
+        return 0.0
+    overlap = tokens & query_tokens
+    return len(overlap) / len(query_tokens)

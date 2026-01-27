@@ -122,7 +122,7 @@ def main():
         top_k = st.slider("検索件数 (top_k)", min_value=1, max_value=10, value=5)
         host = st.text_input("Ollama Host", value=default_host)
         model = st.text_input("Ollama Model", value=default_model)
-        strategy = st.selectbox(
+        base_strategy = st.selectbox(
             "検索戦略",
             options=[
                 "baseline",
@@ -151,6 +151,10 @@ def main():
             }
             else 0,
         )
+        use_mmr = st.checkbox("MMR（多様性確保）", value=False)
+        use_multistage = st.checkbox("マルチステージ検索", value=False)
+        use_llm_expand = st.checkbox("LLMクエリ拡張", value=False)
+        use_context_compress = st.checkbox("重要文抽出（圧縮）", value=False)
         translate_model = st.text_input("翻訳モデル", value=default_translate_model)
         hybrid_alpha = st.slider("ハイブリッド比率（BM25寄り）", min_value=0.0, max_value=1.0, value=default_hybrid_alpha, step=0.1)
         candidate_multiplier = st.slider("候補拡張係数", min_value=1, max_value=5, value=3)
@@ -191,6 +195,15 @@ def main():
 
     retriever = _get_retriever(persist_dir=persist_dir, collection_name=collection)
     llm = _get_llm_client(host=host, model=model)
+    strategy = base_strategy
+    if use_mmr and "mmr" not in strategy:
+        strategy = f"{strategy}_mmr"
+    if use_multistage and "multi" not in strategy:
+        strategy = f"{strategy}_multi"
+    if use_llm_expand and "llm_expand" not in strategy:
+        strategy = f"{strategy}_llm_expand"
+    os.environ["ENABLE_CONTEXT_COMPRESS"] = "true" if use_context_compress else "false"
+
     query_processor = _get_query_processor(
         strategy=strategy,
         host=host,
@@ -242,6 +255,10 @@ def main():
                         "candidate_multiplier": candidate_multiplier,
                         "dynamic_top_k": dynamic_top_k,
                         "enable_expansion": enable_expansion,
+                        "use_mmr": use_mmr,
+                        "use_multistage": use_multistage,
+                        "use_llm_expand": use_llm_expand,
+                        "use_context_compress": use_context_compress,
                         "parent_child": parent_child,
                         "filters": filters,
                         "collection": collection,
@@ -270,6 +287,10 @@ def main():
                         "candidate_multiplier": candidate_multiplier,
                         "dynamic_top_k": dynamic_top_k,
                         "enable_expansion": enable_expansion,
+                        "use_mmr": use_mmr,
+                        "use_multistage": use_multistage,
+                        "use_llm_expand": use_llm_expand,
+                        "use_context_compress": use_context_compress,
                         "parent_child": parent_child,
                         "filters": filters,
                         "error": str(exc),

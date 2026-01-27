@@ -1,6 +1,7 @@
 import os
 
 from hybrid_search import HybridSearcher
+from mmr import mmr_select
 
 
 class SearchEngine:
@@ -29,7 +30,8 @@ class SearchEngine:
 
     def search(self, query, top_k, fallback_en=None, filters=None):
         filters = filters or {}
-        search_query = self.query_processor.build_search_query(query, fallback_en=fallback_en)
+        queries = self.query_processor.build_search_queries(query, fallback_en=fallback_en)
+        search_query = queries[-1] if queries else query
         effective_top_k = self.query_processor.adjust_top_k(
             query,
             top_k,
@@ -45,23 +47,41 @@ class SearchEngine:
 
         filter_fn = _build_filter_fn(filters, require_parent=self.parent_child)
 
-        if self.query_processor.uses_hybrid():
-            results = self.hybrid_searcher.search(
-                search_query,
-                top_k=effective_top_k,
-                alpha=self.hybrid_alpha,
-                candidate_multiplier=self.candidate_multiplier,
-                filter_fn=filter_fn,
-                where=where or None,
+        results = []
+        if self.query_processor.uses_multistage():
+            results = _multistage_search(
+                queries,
+                self.retriever,
+                self.hybrid_searcher if self.query_processor.uses_hybrid() else None,
+                effective_top_k,
+                self.hybrid_alpha,
+                self.candidate_multiplier,
+                filter_fn,
+                where or None,
             )
         else:
-            results = self.retriever.search(
-                search_query, top_k=effective_top_k, where=where or None
-            )
-            results = _apply_filter_fn(results, filter_fn)
+            if self.query_processor.uses_hybrid():
+                results = self.hybrid_searcher.search(
+                    search_query,
+                    top_k=effective_top_k,
+                    alpha=self.hybrid_alpha,
+                    candidate_multiplier=self.candidate_multiplier,
+                    filter_fn=filter_fn,
+                    where=where or None,
+                )
+            else:
+                results = self.retriever.search(
+                    search_query, top_k=effective_top_k, where=where or None
+                )
+                results = _apply_filter_fn(results, filter_fn)
 
         if self.parent_child:
+            if self.query_processor.uses_mmr():
+                results = _apply_mmr(results, effective_top_k)
             results = _expand_children(self.retriever, results, filters)
+        else:
+            if self.query_processor.uses_mmr():
+                results = _apply_mmr(results, effective_top_k)
 
         results = self.query_processor.rerank_results(
             results, search_query, tag_hints=filters.get("tags")
@@ -127,3 +147,58 @@ def _expand_children(retriever, parent_results, filters):
         if accepted:
             children = accepted
     return children
+
+
+def _multistage_search(
+    queries,
+    retriever,
+    hybrid_searcher,
+    top_k,
+    hybrid_alpha,
+    candidate_multiplier,
+    filter_fn,
+    where,
+):
+    merged = {}
+    for query in queries:
+        if hybrid_searcher:
+            results = hybrid_searcher.search(
+                query,
+                top_k=top_k,
+                alpha=hybrid_alpha,
+                candidate_multiplier=candidate_multiplier,
+                filter_fn=filter_fn,
+                where=where,
+            )
+        else:
+            results = retriever.search(query, top_k=top_k, where=where)
+            results = _apply_filter_fn(results, filter_fn)
+        for item in results:
+            item_id = item.get("id")
+            if item_id in merged:
+                merged[item_id] = _prefer_item(merged[item_id], item)
+            else:
+                merged[item_id] = item
+    return list(merged.values())
+
+
+def _prefer_item(a, b):
+    score_a = _base_score(a)
+    score_b = _base_score(b)
+    return a if score_a >= score_b else b
+
+
+def _base_score(item):
+    if item.get("hybrid_score") is not None:
+        return float(item.get("hybrid_score") or 0.0)
+    if item.get("distance") is not None:
+        return 1.0 - float(item.get("distance") or 0.0)
+    if item.get("bm25_score") is not None:
+        return float(item.get("bm25_score") or 0.0)
+    return 0.0
+
+
+def _apply_mmr(results, top_k):
+    lambda_param = float(os.getenv("MMR_LAMBDA", "0.7"))
+    max_candidates = int(os.getenv("MMR_MAX_CANDIDATES", "30"))
+    return mmr_select(results, top_k=top_k, lambda_param=lambda_param, max_candidates=max_candidates)

@@ -64,6 +64,15 @@ class QueryProcessor:
     def uses_hybrid(self):
         return "hybrid" in self.strategy
 
+    def uses_mmr(self):
+        return "mmr" in self.strategy
+
+    def uses_multistage(self):
+        return "multi" in self.strategy
+
+    def uses_llm_expansion(self):
+        return "llm_expand" in self.strategy
+
     def build_search_query(self, query, fallback_en=None):
         if self.uses_translation():
             if fallback_en:
@@ -72,9 +81,28 @@ class QueryProcessor:
                 base = self.translate_ja_to_en(query)
         else:
             base = query
+        expanded = base
         if self.enable_expansion:
-            return self.expand_query(base)
-        return base
+            expanded = self.expand_query(base)
+        if self.uses_llm_expansion():
+            expanded = self.expand_query_llm(expanded, base_query=base)
+        return expanded
+
+    def build_search_queries(self, query, fallback_en=None):
+        base = query
+        if self.uses_translation():
+            base = fallback_en or self.translate_ja_to_en(query)
+
+        queries = [base]
+        if self.enable_expansion:
+            expanded = self.expand_query(base)
+            if expanded not in queries:
+                queries.append(expanded)
+        if self.uses_llm_expansion():
+            llm_expanded = self.expand_query_llm(queries[-1], base_query=base)
+            if llm_expanded not in queries:
+                queries.append(llm_expanded)
+        return queries
 
     def rerank_results(self, results, query_for_search, tag_hints=None):
         if not self.uses_rerank():
@@ -107,6 +135,50 @@ class QueryProcessor:
         if not additions:
             return query
         return f"{query} {' '.join(additions)}"
+
+    def expand_query_llm(self, query, base_query=None):
+        if not query:
+            return query
+        if not self._should_use_llm_expansion(query):
+            return query
+        prompt = (
+            "You are expanding a search query for technical Q&A retrieval. "
+            "Return 5 short keywords or phrases to improve recall. "
+            "Return keywords in the same language as the input, separated by spaces.\n\n"
+            f"Query:\n{query}\n\n"
+            "Keywords:"
+        )
+        try:
+            response = self._generate(
+                prompt,
+                system="Return keywords only.",
+                options={"temperature": 0.2, "num_predict": 64},
+            )
+        except Exception:
+            return query
+        keywords = self._clean_keywords(response)
+        if not keywords:
+            return query
+        base = base_query or query
+        return f"{base} {' '.join(keywords)}"
+
+    def _should_use_llm_expansion(self, query):
+        max_len = int(os.getenv("LLM_EXPANSION_MAX_CHARS", "120"))
+        return len(query) <= max_len
+
+    def _clean_keywords(self, text):
+        if not text:
+            return []
+        tokens = re.findall(r"[A-Za-z0-9_]+|[ぁ-んァ-ン一-龯]+", text)
+        seen = set()
+        cleaned = []
+        for token in tokens:
+            token_l = token.lower()
+            if token_l in seen:
+                continue
+            seen.add(token_l)
+            cleaned.append(token)
+        return cleaned
 
     def translate_ja_to_en(self, text):
         if not text:

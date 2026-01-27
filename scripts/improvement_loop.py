@@ -196,6 +196,7 @@ def evaluate_strategy(
     top_k,
     progress_logger,
 ):
+    os.environ["ENABLE_CONTEXT_COMPRESS"] = "true" if "compress" in strategy else "false"
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     results_path = output_dir / f"answers_{strategy}.jsonl"
@@ -327,7 +328,15 @@ def main():
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--time-limit-hours", type=int, default=7)
     parser.add_argument("--log-interval-minutes", type=int, default=20)
-    parser.add_argument("--strategies", default="baseline,translate,hybrid,translate_hybrid,translate_rerank,translate_hybrid_rerank")
+    parser.add_argument(
+        "--strategies",
+        default=(
+            "baseline,translate,hybrid,translate_hybrid,translate_rerank,translate_hybrid_rerank,"
+            "translate_hybrid_mmr,translate_hybrid_mmr_rerank,"
+            "translate_hybrid_mmr_rerank_multi,translate_hybrid_mmr_rerank_llm_expand,"
+            "translate_hybrid_mmr_rerank_llm_expand_compress"
+        ),
+    )
     parser.add_argument("--eval-model", default="qwen3:8b")
     parser.add_argument("--translate-model", default="qwen3:8b")
     parser.add_argument("--output-dir", default=None)
