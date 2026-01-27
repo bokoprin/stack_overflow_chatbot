@@ -5,3 +5,4 @@ llama-index
 sentence-transformers
 python-dotenv
 streamlit
+rank-bm25

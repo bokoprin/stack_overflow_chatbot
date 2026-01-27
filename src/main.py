@@ -5,6 +5,8 @@ from dotenv import load_dotenv
 
 from indexer import StackOverflowIndexer, find_latest_json
 from llm_client import LLMClient
+from query_processor import QueryProcessor
+from search_engine import SearchEngine
 from retriever import Retriever
 
 
@@ -37,8 +39,8 @@ def _print_sources(results):
         print(line)
 
 
-def answer_query(query, retriever, llm_client, top_k):
-    results = retriever.search(query, top_k=top_k)
+def answer_query(query, search_engine, llm_client, top_k, filters=None):
+    _, results = search_engine.search(query, top_k=top_k, filters=filters)
     prompt = llm_client.build_prompt(query, results)
     answer = llm_client.generate_answer(prompt)
     print(answer)
@@ -51,7 +53,13 @@ def run_query(args):
         collection_name=args.collection,
     )
     llm_client = LLMClient()
-    answer_query(args.query, retriever, llm_client, args.top_k)
+    query_processor = QueryProcessor(
+        enable_expansion=args.enable_expansion,
+        dynamic_top_k=args.dynamic_top_k,
+    )
+    search_engine = SearchEngine(retriever, query_processor, parent_child=args.parent_child)
+    filters = _build_filters(args)
+    answer_query(args.query, search_engine, llm_client, args.top_k, filters=filters)
 
 
 def run_interactive(args):
@@ -60,6 +68,12 @@ def run_interactive(args):
         collection_name=args.collection,
     )
     llm_client = LLMClient()
+    query_processor = QueryProcessor(
+        enable_expansion=args.enable_expansion,
+        dynamic_top_k=args.dynamic_top_k,
+    )
+    search_engine = SearchEngine(retriever, query_processor, parent_child=args.parent_child)
+    filters = _build_filters(args)
     print("対話モード開始。終了する場合は exit / quit / q を入力してください。")
     while True:
         try:
@@ -72,7 +86,7 @@ def run_interactive(args):
         if query.lower() in {"exit", "quit", "q"}:
             print("対話モード終了。")
             break
-        answer_query(query, retriever, llm_client, args.top_k)
+        answer_query(query, search_engine, llm_client, args.top_k, filters=filters)
 
 
 def main():
@@ -84,6 +98,16 @@ def main():
     parser.add_argument("--query", help="User query text.")
     parser.add_argument("--interactive", action="store_true", help="Start interactive mode.")
     parser.add_argument("--top-k", type=int, default=5)
+    parser.add_argument("--tags", default="", help="Filter by tags (comma separated).")
+    parser.add_argument("--language", choices=["ja", "en"], default=None)
+    parser.add_argument("--min-score", type=float, default=None)
+    parser.add_argument("--accepted-only", action="store_true")
+    parser.add_argument("--parent-child", action="store_true", help="Enable parent-child search.")
+    parser.add_argument("--no-parent-child", action="store_true")
+    parser.add_argument("--enable-expansion", action="store_true")
+    parser.add_argument("--no-expansion", action="store_true")
+    parser.add_argument("--dynamic-top-k", action="store_true")
+    parser.add_argument("--no-dynamic-top-k", action="store_true")
     parser.add_argument("--persist-dir", default=os.getenv("CHROMA_PERSIST_DIR", "vector_db"))
     parser.add_argument("--collection", default=os.getenv("CHROMA_COLLECTION", "stack_overflow"))
     parser.add_argument("--batch-size", type=int, default=16)
@@ -93,12 +117,26 @@ def main():
         parser.print_help()
         return
 
+    args.parent_child = True if args.parent_child else not args.no_parent_child
+    args.enable_expansion = True if args.enable_expansion else not args.no_expansion
+    args.dynamic_top_k = True if args.dynamic_top_k else not args.no_dynamic_top_k
+
     if args.index:
         run_index(args)
     if args.query:
         run_query(args)
     if args.interactive:
         run_interactive(args)
+
+
+def _build_filters(args):
+    tags = [t.strip() for t in (args.tags or "").split(",") if t.strip()]
+    return {
+        "tags": tags,
+        "language": args.language,
+        "min_score": args.min_score,
+        "accepted_only": args.accepted_only,
+    }
 
 
 if __name__ == "__main__":

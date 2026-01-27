@@ -58,7 +58,7 @@ class LLMClient:
         return data.get("response", "")
 
     def _contains_japanese(self, text):
-        return re.search(r"[\\u3040-\\u30ff\\u4e00-\\u9fff]", text) is not None
+        return re.search(r"[\u3040-\u30ff]", text or "") is not None
 
     def _translate_to_japanese(self, text):
         prompt = (

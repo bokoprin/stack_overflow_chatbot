@@ -182,6 +182,7 @@ class StackOverflowDataLoader:
             "question_id": question.get("question_id"),
             "title": question.get("title"),
             "body": question.get("body"),
+            "score": question.get("score"),
             "tags": question.get("tags", []),
             "link": question.get("link"),
             "creation_date": question.get("creation_date"),

@@ -9,6 +9,8 @@ import streamlit as st
 from streamlit.runtime.scriptrunner_utils.script_run_context import get_script_run_ctx
 
 from llm_client import LLMClient
+from query_processor import QueryProcessor
+from search_engine import SearchEngine
 from retriever import Retriever
 
 
@@ -20,6 +22,38 @@ def _get_retriever(persist_dir: str, collection_name: str) -> Retriever:
 @st.cache_resource
 def _get_llm_client(host: str, model: str) -> LLMClient:
     return LLMClient(host=host, model=model)
+
+
+@st.cache_resource
+def _get_query_processor(
+    strategy: str,
+    host: str,
+    translate_model: str,
+    enable_expansion: bool,
+    dynamic_top_k: bool,
+) -> QueryProcessor:
+    return QueryProcessor(
+        strategy=strategy,
+        host=host,
+        translate_model=translate_model,
+        enable_expansion=enable_expansion,
+        dynamic_top_k=dynamic_top_k,
+    )
+
+
+@st.cache_resource
+def _get_search_engine(
+    retriever: Retriever,
+    query_processor: QueryProcessor,
+    hybrid_alpha: float,
+    candidate_multiplier: int,
+) -> SearchEngine:
+    return SearchEngine(
+        retriever=retriever,
+        query_processor=query_processor,
+        hybrid_alpha=hybrid_alpha,
+        candidate_multiplier=candidate_multiplier,
+    )
 
 
 def _format_source_line(index: int, item: dict) -> str:
@@ -47,7 +81,7 @@ def _log_perf(payload: dict) -> None:
 
 
 def _contains_japanese(text: str) -> bool:
-    return re.search(r"[\u3040-\u30ff\u4e00-\u9fff]", text or "") is not None
+    return re.search(r"[\u3040-\u30ff]", text or "") is not None
 
 
 def main():
@@ -63,6 +97,21 @@ def main():
     default_collection = os.getenv("CHROMA_COLLECTION", "stack_overflow")
     default_model = os.getenv("OLLAMA_MODEL", "qwen3:14b")
     default_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+    default_strategy = os.getenv("QUERY_STRATEGY", "baseline")
+    default_translate_model = os.getenv("QUERY_TRANSLATE_MODEL", "qwen3:8b")
+    default_hybrid_alpha = float(os.getenv("HYBRID_ALPHA", "0.5"))
+    default_dynamic_top_k = os.getenv("DYNAMIC_TOP_K", "true").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    default_expansion = os.getenv("ENABLE_QUERY_EXPANSION", "true").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
     st.title("Stack Overflow RAG Chatbot")
 
@@ -73,6 +122,45 @@ def main():
         top_k = st.slider("検索件数 (top_k)", min_value=1, max_value=10, value=5)
         host = st.text_input("Ollama Host", value=default_host)
         model = st.text_input("Ollama Model", value=default_model)
+        strategy = st.selectbox(
+            "検索戦略",
+            options=[
+                "baseline",
+                "translate",
+                "hybrid",
+                "translate_hybrid",
+                "translate_rerank",
+                "translate_hybrid_rerank",
+            ],
+            index=[
+                "baseline",
+                "translate",
+                "hybrid",
+                "translate_hybrid",
+                "translate_rerank",
+                "translate_hybrid_rerank",
+            ].index(default_strategy)
+            if default_strategy
+            in {
+                "baseline",
+                "translate",
+                "hybrid",
+                "translate_hybrid",
+                "translate_rerank",
+                "translate_hybrid_rerank",
+            }
+            else 0,
+        )
+        translate_model = st.text_input("翻訳モデル", value=default_translate_model)
+        hybrid_alpha = st.slider("ハイブリッド比率（BM25寄り）", min_value=0.0, max_value=1.0, value=default_hybrid_alpha, step=0.1)
+        candidate_multiplier = st.slider("候補拡張係数", min_value=1, max_value=5, value=3)
+        enable_expansion = st.checkbox("クエリ拡張を有効化", value=default_expansion)
+        dynamic_top_k = st.checkbox("動的top_kを有効化", value=default_dynamic_top_k)
+        parent_child = st.checkbox("親子チャンク検索", value=True)
+        tag_filter = st.text_input("タグフィルタ(カンマ区切り)", value="")
+        language_filter = st.selectbox("言語フィルタ", options=["auto", "ja", "en"], index=0)
+        min_score = st.number_input("最小スコア", min_value=0, max_value=50, value=0)
+        accepted_only = st.checkbox("承認回答のみ", value=False)
         show_sources = st.checkbox("参照（Sources）を表示", value=True)
         show_timing = st.checkbox("処理時間を表示", value=True)
         if st.button("履歴をクリア"):
@@ -103,13 +191,35 @@ def main():
 
     retriever = _get_retriever(persist_dir=persist_dir, collection_name=collection)
     llm = _get_llm_client(host=host, model=model)
+    query_processor = _get_query_processor(
+        strategy=strategy,
+        host=host,
+        translate_model=translate_model,
+        enable_expansion=enable_expansion,
+        dynamic_top_k=dynamic_top_k,
+    )
+    search_engine = _get_search_engine(
+        retriever=retriever,
+        query_processor=query_processor,
+        hybrid_alpha=hybrid_alpha,
+        candidate_multiplier=candidate_multiplier,
+    )
 
     with st.chat_message("assistant"):
         with st.spinner("回答を生成中..."):
             t0 = time.perf_counter()
             try:
                 t_retrieval_start = time.perf_counter()
-                results = retriever.search(user_text, top_k=top_k)
+                filters = {
+                    "tags": [t.strip() for t in tag_filter.split(",") if t.strip()],
+                    "language": None if language_filter == "auto" else language_filter,
+                    "min_score": min_score if min_score > 0 else None,
+                    "accepted_only": accepted_only,
+                }
+                search_engine.parent_child = parent_child
+                search_query, results = search_engine.search(
+                    user_text, top_k=top_k, filters=filters
+                )
                 t_retrieval = time.perf_counter() - t_retrieval_start
 
                 prompt = llm.build_prompt(user_text, results)
@@ -126,10 +236,19 @@ def main():
                         "retrieval_sec": round(t_retrieval, 3),
                         "llm_sec": round(t_llm, 3),
                         "total_sec": round(time.perf_counter() - t0, 3),
+                        "strategy": strategy,
+                        "search_query": search_query,
+                        "hybrid_alpha": hybrid_alpha,
+                        "candidate_multiplier": candidate_multiplier,
+                        "dynamic_top_k": dynamic_top_k,
+                        "enable_expansion": enable_expansion,
+                        "parent_child": parent_child,
+                        "filters": filters,
                         "collection": collection,
                         "persist_dir": persist_dir,
                         "ollama_host": host,
                         "ollama_model": model,
+                        "translate_model": translate_model,
                         "answer_japanese": _contains_japanese(answer),
                     }
                 )
@@ -141,10 +260,18 @@ def main():
                     {
                         "query": user_text,
                         "top_k": top_k,
+                        "strategy": strategy,
                         "collection": collection,
                         "persist_dir": persist_dir,
                         "ollama_host": host,
                         "ollama_model": model,
+                        "translate_model": translate_model,
+                        "hybrid_alpha": hybrid_alpha,
+                        "candidate_multiplier": candidate_multiplier,
+                        "dynamic_top_k": dynamic_top_k,
+                        "enable_expansion": enable_expansion,
+                        "parent_child": parent_child,
+                        "filters": filters,
                         "error": str(exc),
                     }
                 )
