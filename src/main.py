@@ -24,9 +24,10 @@ def run_index(args):
 
 
 def _print_sources(results):
-    if not results:
-        return
     print("\nSources:")
+    if not results:
+        print("(none)")
+        return
     for idx, item in enumerate(results, start=1):
         metadata = item.get("metadata") or {}
         line = f"[{idx}] type={metadata.get('chunk_type')} qid={metadata.get('question_id')}"

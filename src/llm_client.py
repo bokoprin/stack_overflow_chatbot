@@ -47,8 +47,12 @@ class LLMClient:
         if self.enforce_japanese and answer and not self._contains_japanese(answer):
             translated = self._translate_to_japanese(answer)
             if translated:
-                return translated.strip()
-        return answer.strip()
+                answer = translated
+        answer = answer.strip()
+        max_chars = int(os.getenv("ANSWER_MAX_CHARS", "0"))
+        if max_chars > 0 and len(answer) > max_chars:
+            answer = answer[:max_chars].rstrip() + "…"
+        return answer
 
     def _generate(self, prompt, system=None):
         url = f"{self.host}/api/generate"

@@ -38,9 +38,13 @@ class BM25Index:
 class HybridSearcher:
     def __init__(self, retriever, cache_path=None):
         self.retriever = retriever
-        self.cache_path = Path(
-            cache_path or os.getenv("BM25_CACHE_PATH", "data/processed/bm25_cache.pkl")
-        )
+        if cache_path:
+            self.cache_path = Path(cache_path)
+        else:
+            collection_name = getattr(retriever.collection, "name", "default")
+            safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", collection_name)
+            default_path = f"data/processed/bm25_cache_{safe_name}.pkl"
+            self.cache_path = Path(os.getenv("BM25_CACHE_PATH", default_path))
         self._bm25 = None
 
     def _load_bm25(self):
@@ -49,10 +53,16 @@ class HybridSearcher:
 
         collection = self.retriever.collection
         count = collection.count()
+        refresh = os.getenv("BM25_CACHE_REFRESH", "false").lower() in {"1", "true", "yes", "on"}
         if self.cache_path.exists():
             with self.cache_path.open("rb") as handle:
                 cached = pickle.load(handle)
-            if cached.get("count") == count:
+            if (
+                not refresh
+                and cached.get("count") == count
+                and cached.get("collection_name") == getattr(collection, "name", None)
+                and cached.get("persist_dir") == getattr(self.retriever, "persist_dir", None)
+            ):
                 self._bm25 = BM25Index(
                     cached["ids"], cached["documents"], cached["metadatas"]
                 )
@@ -68,6 +78,8 @@ class HybridSearcher:
         with self.cache_path.open("wb") as handle:
             pickle.dump(
                 {
+                    "collection_name": getattr(collection, "name", None),
+                    "persist_dir": getattr(self.retriever, "persist_dir", None),
                     "count": count,
                     "ids": ids,
                     "documents": documents,

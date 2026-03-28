@@ -168,7 +168,7 @@ def main():
         language_filter = st.selectbox("言語フィルタ", options=["auto", "ja", "en"], index=0)
         min_score = st.number_input("最小スコア", min_value=0, max_value=50, value=0)
         accepted_only = st.checkbox("承認回答のみ", value=False)
-        show_sources = st.checkbox("参照（Sources）を表示", value=True)
+        show_sources = True
         show_timing = st.checkbox("処理時間を表示", value=True)
         if st.button("履歴をクリア"):
             st.session_state.pop("messages", None)
@@ -184,9 +184,10 @@ def main():
                 meta = message.get("meta") or {}
                 if show_timing and meta.get("timing"):
                     st.caption(meta["timing"])
-                if show_sources and meta.get("sources"):
+                if show_sources:
                     with st.expander("参照", expanded=False):
-                        st.markdown("\n".join(meta["sources"]))
+                        sources = meta.get("sources") or []
+                        st.markdown("\n".join(sources) if sources else "参照なし")
 
     user_text = st.chat_input("質問を入力してください")
     if not user_text:
@@ -315,9 +316,9 @@ def main():
             st.markdown(answer)
             if show_timing and timing:
                 st.caption(timing)
-            if show_sources and sources:
+            if show_sources:
                 with st.expander("参照", expanded=False):
-                    st.markdown("\n".join(sources))
+                    st.markdown("\n".join(sources) if sources else "参照なし")
 
     st.session_state.messages.append(
         {

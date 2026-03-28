@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import re
+import time
 from pathlib import Path
 
 import chromadb
@@ -189,6 +190,7 @@ class StackOverflowIndexer:
             name=self.collection_name, metadata={"hnsw:space": "cosine"}
         )
         total = len(chunks)
+        start_time = time.time()
         for start in range(0, total, self.batch_size):
             batch = chunks[start : start + self.batch_size]
             texts = [item["text"] for item in batch]
@@ -206,7 +208,16 @@ class StackOverflowIndexer:
                 ids=ids,
                 metadatas=metadatas,
             )
-            print(f"indexed {min(start + self.batch_size, total)}/{total}")
+            done = min(start + self.batch_size, total)
+            elapsed = max(time.time() - start_time, 1e-6)
+            rate = done / elapsed
+            remaining = max(total - done, 0)
+            eta_sec = int(remaining / rate) if rate > 0 else 0
+            percent = (done / total * 100) if total else 100
+            print(
+                f"indexed {done}/{total} ({percent:.1f}%) "
+                f"elapsed={int(elapsed)}s eta={eta_sec}s"
+            )
         return collection.count()
 
 

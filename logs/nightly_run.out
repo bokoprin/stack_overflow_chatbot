@@ -3,3 +3,7 @@
 [2026-01-27 22:24:09] ollama model present: qwen3:14b
 [2026-01-27 22:24:09] ollama model present: qwen3:8b
 [2026-01-27 22:24:09] starting full reindex
+[2026-01-28 04:24:11] ERROR: timeout waiting for pid 160971
+[2026-01-28 04:24:11] ERROR: indexer failed or timed out
+[2026-01-28 04:24:11] reindex for embedding model: BAAI/bge-m3 (collection=stack_overflow_BAAI_bge-m3)
+[2026-01-28 22:50:49] nightly_run finished

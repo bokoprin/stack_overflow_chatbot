@@ -310,6 +310,23 @@ def select_best(metrics_list):
     return sorted(metrics_list, key=key, reverse=True)[0] if metrics_list else None
 
 
+def write_summary_table(metrics_list, output_dir):
+    if not metrics_list:
+        return None
+    lines = [
+        "| strategy | avg_score | hit_rate | mrr | accuracy | total | scored |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for item in sorted(metrics_list, key=lambda x: x["avg_score"], reverse=True):
+        lines.append(
+            f"| {item['strategy']} | {item['avg_score']} | {item['hit_rate']} | "
+            f"{item['mrr']} | {item['accuracy']} | {item['total']} | {item['scored']} |"
+        )
+    output_path = Path(output_dir) / "summary.md"
+    output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return output_path
+
+
 def update_env_best_strategy(strategy):
     env_path = Path(".env")
     if not env_path.exists():
@@ -410,6 +427,9 @@ def main():
 
     summary_path = output_dir / "summary.json"
     summary_path.write_text(json.dumps(metrics_all, ensure_ascii=False, indent=2), encoding="utf-8")
+    table_path = write_summary_table(metrics_all, output_dir)
+    if table_path:
+        progress_logger.log("summary_table", path=str(table_path))
     progress_logger.log("end", metrics=metrics_all)
 
 

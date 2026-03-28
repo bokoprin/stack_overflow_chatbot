@@ -146,7 +146,7 @@ run_eval_loop() {
     clean_model="$(echo "$model" | tr '/:.' '___')"
     local collection="stack_overflow_${clean_model}"
     log "reindex for embedding model: $model (collection=$collection)"
-    EMBEDDING_MODEL="$model" "$ROOT_DIR/venv/bin/python" "$ROOT_DIR/src/indexer.py" \
+    PYTHONUNBUFFERED=1 EMBEDDING_MODEL="$model" "$ROOT_DIR/venv/bin/python" "$ROOT_DIR/src/indexer.py" \
       --reset \
       --collection "$collection" \
       >> "$LOG_DIR/indexer_${clean_model}.log" 2>&1 || fail "indexer failed: $model"
@@ -199,10 +199,14 @@ if start_or_wait_indexer; then
   log "indexer completed"
 else
   fail "indexer failed or timed out"
+  exit 1
 fi
 
 if ollama_ready; then
-  run_eval_loop || fail "improvement loop failed"
+  run_eval_loop || {
+    fail "improvement loop failed"
+    exit 1
+  }
 else
   fail "skipping evaluation: ollama not available"
 fi
