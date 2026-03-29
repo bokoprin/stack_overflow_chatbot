@@ -49,3 +49,8 @@ Keep application logic in `src/` and keep generated outputs under `data/`, `vect
 - Never commit `.env` or API keys.
 - Treat `data/raw/`, `vector_db/`, and `logs/` as generated/runtime state; avoid unnecessary diffs.
 - When adding new config, update both `.env.example` and `documents/setup_guide.md`.
+
+## Evaluation Policy
+- For RAG evaluation/judging, do not use cloud/API-based judge scoring by default.
+- Use `judge-mode id_only` as the standard evaluation mode unless explicitly overridden by the user.
+- Judging is performed directly by Codex (assistant-side evaluation) under this default policy.

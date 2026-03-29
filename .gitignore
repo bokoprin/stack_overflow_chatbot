@@ -16,3 +16,4 @@ data/raw/
 data/processed/
 vector_db/
 .aider*
+documents/setup_guide.md
