@@ -29,19 +29,14 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Accept licenses and install Android 37 platform
+      - name: Accept licenses and install Android 36 platform
         shell: bash
         run: |
           set -euo pipefail
           yes | sdkmanager --licenses >/dev/null || true
-          if ! sdkmanager "platform-tools" "platforms;android-37" > /tmp/sdk-install.log 2>&1; then
-            echo "Android 37 was not available on the stable channel; retrying the preview channel."
-            if ! sdkmanager --channel=3 "platform-tools" "platforms;android-37" >> /tmp/sdk-install.log 2>&1; then
-              tail -n 200 /tmp/sdk-install.log
-              echo "Available nearby Android platforms:"
-              sdkmanager --channel=3 --list 2>/dev/null | grep -E 'platforms;android-(36|37)' || true
-              exit 1
-            fi
+          if ! sdkmanager "platform-tools" "platforms;android-36" > /tmp/sdk-install.log 2>&1; then
+            tail -n 200 /tmp/sdk-install.log
+            exit 1
           fi
           tail -n 30 /tmp/sdk-install.log
 
@@ -55,6 +50,9 @@ jobs:
           tar -xzf /tmp/model-color.tar.gz -C /tmp/model-color
           chmod +x /tmp/model-color/gradlew /tmp/model-color/scripts/*.sh
           /tmp/model-color/scripts/verify_project.sh
+          sed -i 's/compileSdk = 37/compileSdk = 36/' /tmp/model-color/app/build.gradle.kts
+          sed -i 's/targetSdk = 37/targetSdk = 36/' /tmp/model-color/app/build.gradle.kts
+          grep -nE 'compileSdk|targetSdk' /tmp/model-color/app/build.gradle.kts
 
       - name: Run JVM unit tests
         working-directory: /tmp/model-color
