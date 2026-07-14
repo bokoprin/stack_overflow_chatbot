@@ -1,0 +1,167 @@
+name: Build and publish Model Color APK
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  build-model-color-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out temporary build branch
+        uses: actions/checkout@v4
+
+      - name: Restore source archive
+        id: restore
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          chunks=(
+            .ci/model-color-source.b64.000
+            .ci/model-color-source.b64.001
+            .ci/model-color-source.b64.002
+            .ci/model-color-source.b64.003
+            .ci/model-color-source.b64.003a
+            .ci/model-color-source.b64.003b
+            .ci/model-color-source.b64.003c
+            .ci/model-color-source.b64.004
+            .ci/model-color-source.b64.005
+            .ci/model-color-source.b64.006
+            .ci/model-color-source.b64.007
+            .ci/model-color-source.b64.008
+            .ci/model-color-source.b64.009
+            .ci/model-color-source.b64.010
+            .ci/model-color-source.b64.011a
+            .ci/model-color-source.b64.011b
+            .ci/model-color-source.b64.011c
+            .ci/model-color-source.b64.011d
+            .ci/model-color-source.b64.012
+          )
+          cat "${chunks[@]}" | base64 --decode > /tmp/model-color.tar.gz
+          echo "e9403ece9f39a89df235a0a74329d04e47a15d02bb5c5aa5b37605be86551ad0  /tmp/model-color.tar.gz" | sha256sum --check
+          mkdir -p /tmp/model-color
+          tar -xzf /tmp/model-color.tar.gz -C /tmp/model-color
+          chmod +x /tmp/model-color/gradlew /tmp/model-color/scripts/*.sh
+          /tmp/model-color/scripts/verify_project.sh | tee /tmp/verify.log
+          sed -i 's/compileSdk = 37/compileSdk = 36/' /tmp/model-color/app/build.gradle.kts
+          sed -i 's/targetSdk = 37/targetSdk = 36/' /tmp/model-color/app/build.gradle.kts
+          grep -nE 'compileSdk|targetSdk' /tmp/model-color/app/build.gradle.kts
+
+      - name: Set up Java 17
+        if: steps.restore.outcome == 'success'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle cache
+        if: steps.restore.outcome == 'success'
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Android SDK
+        id: android-sdk
+        if: steps.restore.outcome == 'success'
+        continue-on-error: true
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 36 platform
+        id: install-sdk
+        if: steps.restore.outcome == 'success' && steps.android-sdk.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-36" > /tmp/sdk-install.log 2>&1
+          tail -n 50 /tmp/sdk-install.log
+
+      - name: Run JVM unit tests
+        id: unit-tests
+        if: steps.restore.outcome == 'success' && steps.install-sdk.outcome == 'success'
+        continue-on-error: true
+        working-directory: /tmp/model-color
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew testDebugUnitTest --stacktrace > /tmp/unit-test.log 2>&1
+          status=$?
+          tail -n 300 /tmp/unit-test.log
+          exit "$status"
+
+      - name: Run Android lint
+        id: lint
+        if: steps.restore.outcome == 'success' && steps.install-sdk.outcome == 'success'
+        continue-on-error: true
+        working-directory: /tmp/model-color
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew lintDebug --stacktrace > /tmp/lint.log 2>&1
+          status=$?
+          tail -n 300 /tmp/lint.log
+          exit "$status"
+
+      - name: Build debug APK
+        id: assemble
+        if: steps.restore.outcome == 'success' && steps.install-sdk.outcome == 'success'
+        continue-on-error: true
+        working-directory: /tmp/model-color
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew assembleDebug --stacktrace > /tmp/assemble.log 2>&1
+          status=$?
+          tail -n 300 /tmp/assemble.log
+          exit "$status"
+
+      - name: Validate APK
+        id: validate
+        if: steps.assemble.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build-output
+          cp /tmp/model-color/app/build/outputs/apk/debug/app-debug.apk build-output/model-color-0.10.0-debug.apk
+          sha256sum build-output/model-color-0.10.0-debug.apk | tee build-output/model-color-0.10.0-debug.apk.sha256
+          unzip -t build-output/model-color-0.10.0-debug.apk > /tmp/apk-unzip-test.log
+          unzip -l build-output/model-color-0.10.0-debug.apk | grep 'assets/magic_touch.tflite' > /tmp/model-asset-check.log
+          cat /tmp/model-asset-check.log
+
+      - name: Publish build output and diagnostics
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build-output/logs
+          for f in verify sdk-install unit-test lint assemble apk-unzip-test model-asset-check; do
+            if [ -f "/tmp/${f}.log" ]; then
+              cp "/tmp/${f}.log" "build-output/logs/${f}.log"
+            fi
+          done
+          cat > build-output/status.txt <<EOF
+          restore=${{ steps.restore.outcome }}
+          android_sdk=${{ steps.android-sdk.outcome }}
+          install_sdk=${{ steps.install-sdk.outcome }}
+          unit_tests=${{ steps.unit-tests.outcome }}
+          lint=${{ steps.lint.outcome }}
+          assemble=${{ steps.assemble.outcome }}
+          validate=${{ steps.validate.outcome }}
+          source_archive_sha256=e9403ece9f39a89df235a0a74329d04e47a15d02bb5c5aa5b37605be86551ad0
+          build_compile_sdk=36
+          build_target_sdk=36
+          original_source_compile_sdk=37
+          original_source_target_sdk=37
+          EOF
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add build-output
+          git commit -m "[skip ci] Publish temporary Model Color APK build output" || true
+          git push origin HEAD:ci/model-color-apk-20260715
