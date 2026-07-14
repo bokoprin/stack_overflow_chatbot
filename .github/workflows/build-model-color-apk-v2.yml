@@ -1,0 +1,135 @@
+name: Build repaired Model Color APK
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build-model-color-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out temporary build branch
+        uses: actions/checkout@v4
+
+      - name: Restore and verify source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          chunks=(
+            .ci/model-color-source.b64.000
+            .ci/model-color-source.b64.001
+            .ci/model-color-source.b64.002
+            .ci/model-color-source.b64.003
+            .ci/model-color-source.b64.003a
+            .ci/model-color-source.b64.003b
+            .ci/model-color-source.b64.003c
+            .ci/model-color-source.b64.004
+            .ci/model-color-source.b64.005
+            .ci/model-color-source.b64.006
+            .ci/model-color-source.b64.007
+            .ci/model-color-source.b64.008
+            .ci/model-color-source.b64.009
+            .ci/model-color-source.b64.010
+            .ci/model-color-source.b64.011a
+            .ci/model-color-source.b64.011b
+            .ci/model-color-source.b64.011c
+            .ci/model-color-source.b64.011d
+            .ci/model-color-source.b64.012
+          )
+          cat "${chunks[@]}" | base64 --decode > /tmp/model-color.tar.gz
+          echo "e9403ece9f39a89df235a0a74329d04e47a15d02bb5c5aa5b37605be86551ad0  /tmp/model-color.tar.gz" | sha256sum --check
+          mkdir -p /tmp/model-color
+          tar -xzf /tmp/model-color.tar.gz -C /tmp/model-color
+          chmod +x /tmp/model-color/gradlew /tmp/model-color/scripts/*.sh
+          /tmp/model-color/scripts/verify_project.sh
+          sed -i 's/compileSdk = 37/compileSdk = 36/' /tmp/model-color/app/build.gradle.kts
+          sed -i 's/targetSdk = 37/targetSdk = 36/' /tmp/model-color/app/build.gradle.kts
+          grep -nE 'compileSdk|targetSdk' /tmp/model-color/app/build.gradle.kts
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 36 platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-36"
+
+      - name: Run JVM unit tests
+        working-directory: /tmp/model-color
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! ./gradlew testDebugUnitTest --stacktrace > /tmp/unit-test.log 2>&1; then
+            tail -n 300 /tmp/unit-test.log
+            exit 1
+          fi
+          tail -n 60 /tmp/unit-test.log
+
+      - name: Run Android lint
+        working-directory: /tmp/model-color
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! ./gradlew lintDebug --stacktrace > /tmp/lint.log 2>&1; then
+            tail -n 300 /tmp/lint.log
+            exit 1
+          fi
+          tail -n 60 /tmp/lint.log
+
+      - name: Build debug APK
+        working-directory: /tmp/model-color
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! ./gradlew assembleDebug --stacktrace > /tmp/assemble.log 2>&1; then
+            tail -n 300 /tmp/assemble.log
+            exit 1
+          fi
+          tail -n 60 /tmp/assemble.log
+
+      - name: Prepare APK artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifact
+          cp /tmp/model-color/app/build/outputs/apk/debug/app-debug.apk artifact/model-color-0.10.0-debug.apk
+          sha256sum artifact/model-color-0.10.0-debug.apk | tee artifact/model-color-0.10.0-debug.apk.sha256
+          unzip -t artifact/model-color-0.10.0-debug.apk
+          unzip -l artifact/model-color-0.10.0-debug.apk | grep 'assets/magic_touch.tflite'
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-color-0.10.0-debug-apk
+          path: |
+            artifact/model-color-0.10.0-debug.apk
+            artifact/model-color-0.10.0-debug.apk.sha256
+          if-no-files-found: error
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-color-build-diagnostics-v2
+          path: |
+            /tmp/unit-test.log
+            /tmp/lint.log
+            /tmp/assemble.log
+          if-no-files-found: ignore
