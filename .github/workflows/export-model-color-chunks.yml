@@ -1,0 +1,22 @@
+name: Export temporary Model Color chunks
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  export-chunks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: current-model-color-chunks
+          path: |
+            .ci/model-color-source.b64.003
+            .ci/model-color-source.b64.011
+          if-no-files-found: error
