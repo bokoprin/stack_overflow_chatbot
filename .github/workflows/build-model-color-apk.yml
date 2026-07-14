@@ -34,7 +34,16 @@ jobs:
         run: |
           set -euo pipefail
           yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platform-tools" "platforms;android-37"
+          if ! sdkmanager "platform-tools" "platforms;android-37" > /tmp/sdk-install.log 2>&1; then
+            echo "Android 37 was not available on the stable channel; retrying the preview channel."
+            if ! sdkmanager --channel=3 "platform-tools" "platforms;android-37" >> /tmp/sdk-install.log 2>&1; then
+              tail -n 200 /tmp/sdk-install.log
+              echo "Available nearby Android platforms:"
+              sdkmanager --channel=3 --list 2>/dev/null | grep -E 'platforms;android-(36|37)' || true
+              exit 1
+            fi
+          fi
+          tail -n 30 /tmp/sdk-install.log
 
       - name: Restore and verify project source
         shell: bash
@@ -49,15 +58,36 @@ jobs:
 
       - name: Run JVM unit tests
         working-directory: /tmp/model-color
-        run: ./gradlew testDebugUnitTest --stacktrace
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! ./gradlew testDebugUnitTest --stacktrace > /tmp/unit-test.log 2>&1; then
+            tail -n 250 /tmp/unit-test.log
+            exit 1
+          fi
+          tail -n 50 /tmp/unit-test.log
 
       - name: Run Android lint
         working-directory: /tmp/model-color
-        run: ./gradlew lintDebug --stacktrace
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! ./gradlew lintDebug --stacktrace > /tmp/lint.log 2>&1; then
+            tail -n 250 /tmp/lint.log
+            exit 1
+          fi
+          tail -n 50 /tmp/lint.log
 
       - name: Build debug APK
         working-directory: /tmp/model-color
-        run: ./gradlew assembleDebug --stacktrace
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! ./gradlew assembleDebug --stacktrace > /tmp/assemble.log 2>&1; then
+            tail -n 250 /tmp/assemble.log
+            exit 1
+          fi
+          tail -n 50 /tmp/assemble.log
 
       - name: Prepare APK artifact
         shell: bash
