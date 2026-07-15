@@ -92,6 +92,9 @@ jobs:
 
           path = Path('/tmp/model-color/app/build.gradle.kts')
           text = path.read_text(encoding='utf-8')
+          text = text.replace('java.net.URI', 'URI')
+          text = text.replace('java.nio.file.Files', 'Files')
+          text = text.replace('java.nio.file.StandardCopyOption', 'StandardCopyOption')
           imports = (
               'import java.net.URI\n'
               'import java.nio.file.Files\n'
@@ -99,9 +102,6 @@ jobs:
           )
           if not text.startswith('import java.net.URI'):
               text = imports + text
-          text = text.replace('java.net.URI', 'URI')
-          text = text.replace('java.nio.file.Files', 'Files')
-          text = text.replace('java.nio.file.StandardCopyOption', 'StandardCopyOption')
           path.write_text(text, encoding='utf-8')
           PY
 
@@ -110,7 +110,7 @@ jobs:
           sed -i 's/compileSdk = 37/compileSdk = 36/' /tmp/model-color/app/build.gradle.kts
           sed -i 's/targetSdk = 37/targetSdk = 36/' /tmp/model-color/app/build.gradle.kts
           grep -nE 'compileSdk|targetSdk|versionCode|versionName' /tmp/model-color/app/build.gradle.kts
-          grep -nE '^(import java|import URI|import Files|import Standard)' /tmp/model-color/app/build.gradle.kts | head
+          grep -nE '^import java\.(net|nio)' /tmp/model-color/app/build.gradle.kts
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
