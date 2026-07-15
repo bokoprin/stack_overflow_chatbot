@@ -92,8 +92,8 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          path = Path('/tmp/model-color/app/build.gradle.kts')
-          text = path.read_text(encoding='utf-8')
+          build_path = Path('/tmp/model-color/app/build.gradle.kts')
+          text = build_path.read_text(encoding='utf-8')
           text = text.replace('java.net.URI', 'URI')
           text = text.replace('java.nio.file.Files', 'Files')
           text = text.replace('java.nio.file.StandardCopyOption', 'StandardCopyOption')
@@ -104,7 +104,48 @@ jobs:
           )
           if not text.startswith('import java.net.URI'):
               text = imports + text
-          path.write_text(text, encoding='utf-8')
+          build_path.write_text(text, encoding='utf-8')
+
+          processor_path = Path(
+              '/tmp/model-color/app/src/main/java/com/bokoprin/modelcolor/'
+              'data/segmentation/AutoSelectionMaskProcessor.kt'
+          )
+          processor = processor_path.read_text(encoding='utf-8')
+          old = (
+              '        pixels = removeSmallComponents(pixels, width, height, minimumPixels)\n'
+              '        pixels = fillInternalHoles(pixels, width, height)\n'
+              '        repeat(boundaryAdjustmentPx.coerceAtLeast(0)) {'
+          )
+          new = (
+              '        pixels = removeSmallComponents(pixels, width, height, minimumPixels)\n'
+              '        repeat(boundaryAdjustmentPx.coerceAtLeast(0)) {'
+          )
+          if old not in processor:
+              raise SystemExit('Auto-selection processor patch target was not found')
+          processor_path.write_text(processor.replace(old, new, 1), encoding='utf-8')
+
+          test_path = Path(
+              '/tmp/model-color/app/src/test/java/com/bokoprin/modelcolor/'
+              'feature/editor/EditorViewModelTest.kt'
+          )
+          test_text = test_path.read_text(encoding='utf-8')
+          old_test = (
+              '        viewModel.renameMask(secondId, "胸部")\n'
+              '        viewModel.toggleMaskVisibility(secondId)\n'
+              '        viewModel.moveMask(secondId, -1)\n'
+              '        advanceUntilIdle()'
+          )
+          new_test = (
+              '        viewModel.renameMask(secondId, "胸部")\n'
+              '        advanceUntilIdle()\n'
+              '        viewModel.toggleMaskVisibility(secondId)\n'
+              '        advanceUntilIdle()\n'
+              '        viewModel.moveMask(secondId, -1)\n'
+              '        advanceUntilIdle()'
+          )
+          if old_test not in test_text:
+              raise SystemExit('EditorViewModel test patch target was not found')
+          test_path.write_text(test_text.replace(old_test, new_test, 1), encoding='utf-8')
           PY
 
           find /tmp/model-color/app/src -name '*.kt' -type f -exec \
