@@ -1,0 +1,190 @@
+name: Build Model Color Phase13 APK
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build-phase13-apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out temporary build branch
+        uses: actions/checkout@v4
+
+      - name: Restore Phase10 baseline and apply Phase13 delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/model-color /tmp/phase13-delta /tmp/restore-attempts
+
+          prefix=(
+            .ci/model-color-source.b64.000
+            .ci/model-color-source.b64.001
+            .ci/model-color-source.b64.002
+          )
+          middle=(
+            .ci/model-color-source.b64.004
+            .ci/model-color-source.b64.005
+            .ci/model-color-source.b64.006
+            .ci/model-color-source.b64.007
+            .ci/model-color-source.b64.008
+            .ci/model-color-source.b64.009
+            .ci/model-color-source.b64.010
+          )
+          suffix=(.ci/model-color-source.b64.012)
+          variants003=(
+            '.ci/model-color-source.b64.003'
+            '.ci/model-color-source.b64.003 .ci/model-color-source.b64.003a .ci/model-color-source.b64.003b .ci/model-color-source.b64.003c'
+            '.ci/model-color-source.b64.003a .ci/model-color-source.b64.003b .ci/model-color-source.b64.003c'
+          )
+          variants011=(
+            '.ci/model-color-source.b64.011'
+            '.ci/model-color-source.b64.011a .ci/model-color-source.b64.011b .ci/model-color-source.b64.011d'
+            '.ci/model-color-source.b64.011 .ci/model-color-source.b64.011a .ci/model-color-source.b64.011b .ci/model-color-source.b64.011d'
+            '.ci/model-color-source.b64.011a .ci/model-color-source.b64.011b .ci/model-color-source.b64.011 .ci/model-color-source.b64.011d'
+          )
+
+          found=''
+          attempt=0
+          for v003 in "${variants003[@]}"; do
+            for v011 in "${variants011[@]}"; do
+              attempt=$((attempt + 1))
+              candidate="/tmp/restore-attempts/candidate-${attempt}"
+              cat "${prefix[@]}" $v003 "${middle[@]}" $v011 "${suffix[@]}" > "${candidate}.b64"
+              if base64 --decode "${candidate}.b64" > "${candidate}.tar.gz" 2>/dev/null \
+                && tar -tzf "${candidate}.tar.gz" >/dev/null 2>&1; then
+                found="${candidate}.tar.gz"
+                echo "Valid Phase10 archive found on attempt ${attempt}."
+                sha256sum "$found"
+                break 2
+              fi
+            done
+          done
+          test -n "$found"
+          tar -xzf "$found" -C /tmp/model-color
+
+          delta_chunks=(
+            .ci/phase13-build-delta.part-00
+            .ci/phase13-build-delta.part-01
+            .ci/phase13-build-delta.part-02
+            .ci/phase13-build-delta.part-03
+            .ci/phase13-build-delta.part-04
+            .ci/phase13-build-delta.part-05
+            .ci/phase13-build-delta.part-06
+            .ci/phase13-build-delta.part-07
+            .ci/phase13-build-delta.part-08
+            .ci/phase13-build-delta.part-09
+          )
+          cat "${delta_chunks[@]}" | base64 --decode > /tmp/phase13-delta.tar.xz
+          echo '219f9e1e399187bc35073fbc762d2f0e6dd90e05cac382960a59c545eabaa725  /tmp/phase13-delta.tar.xz' | sha256sum --check
+          tar -xJf /tmp/phase13-delta.tar.xz -C /tmp/phase13-delta
+          cp -a /tmp/phase13-delta/files/. /tmp/model-color/
+          if [[ -s /tmp/phase13-delta/deletions.txt ]]; then
+            while IFS= read -r path; do
+              rm -f "/tmp/model-color/${path}"
+            done < /tmp/phase13-delta/deletions.txt
+          fi
+
+          chmod +x /tmp/model-color/gradlew /tmp/model-color/scripts/*.sh
+          grep -q 'versionName = "0.13.0"' /tmp/model-color/app/build.gradle.kts
+          grep -q 'versionCode = 13' /tmp/model-color/app/build.gradle.kts
+          test -f /tmp/model-color/app/src/main/java/com/bokoprin/modelcolor/data/segmentation/EdgeSamOnnxInteractiveMaskSegmenter.kt
+          test -f /tmp/model-color/app/src/main/java/com/bokoprin/modelcolor/data/segmentation/SegmentationModelComparison.kt
+          grep -q 'onnxruntime-android' /tmp/model-color/gradle/libs.versions.toml
+          sed -i 's/compileSdk = 37/compileSdk = 36/' /tmp/model-color/app/build.gradle.kts
+          sed -i 's/targetSdk = 37/targetSdk = 36/' /tmp/model-color/app/build.gradle.kts
+          grep -nE 'compileSdk|targetSdk|versionCode|versionName' /tmp/model-color/app/build.gradle.kts
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 36 platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platform-tools' 'platforms;android-36' > /tmp/sdk-install.log 2>&1
+          tail -n 50 /tmp/sdk-install.log
+
+      - name: Run JVM unit tests
+        working-directory: /tmp/model-color
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew testDebugUnitTest --stacktrace > /tmp/unit-test.log 2>&1
+          status=$?
+          tail -n 250 /tmp/unit-test.log
+          exit "$status"
+
+      - name: Run Android lint
+        working-directory: /tmp/model-color
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew lintDebug --stacktrace > /tmp/lint.log 2>&1
+          status=$?
+          tail -n 250 /tmp/lint.log
+          exit "$status"
+
+      - name: Build debug APK
+        working-directory: /tmp/model-color
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew assembleDebug --stacktrace > /tmp/assemble.log 2>&1
+          status=$?
+          tail -n 250 /tmp/assemble.log
+          exit "$status"
+
+      - name: Validate standard APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifact
+          cp /tmp/model-color/app/build/outputs/apk/debug/app-debug.apk artifact/model-color-0.13.0-debug.apk
+          sha256sum artifact/model-color-0.13.0-debug.apk | tee artifact/model-color-0.13.0-debug.apk.sha256
+          unzip -t artifact/model-color-0.13.0-debug.apk > /tmp/apk-unzip-test.log
+          unzip -l artifact/model-color-0.13.0-debug.apk | grep 'assets/magic_touch.tflite' > /tmp/model-asset-check.log
+          if unzip -l artifact/model-color-0.13.0-debug.apk | grep -E 'edge_sam_3x_.*\.onnx'; then
+            echo 'Unexpected EdgeSAM model found in standard APK.' >&2
+            exit 1
+          fi
+          cat /tmp/model-asset-check.log
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-color-0.13.0-debug-apk
+          path: |
+            artifact/model-color-0.13.0-debug.apk
+            artifact/model-color-0.13.0-debug.apk.sha256
+          if-no-files-found: error
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-color-phase13-build-diagnostics
+          path: |
+            /tmp/sdk-install.log
+            /tmp/unit-test.log
+            /tmp/lint.log
+            /tmp/assemble.log
+            /tmp/apk-unzip-test.log
+            /tmp/model-asset-check.log
+          if-no-files-found: ignore
