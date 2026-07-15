@@ -75,10 +75,12 @@ jobs:
           tar -xJf /tmp/phase13-delta.tar.xz -C /tmp/phase13-delta
           cp -a /tmp/phase13-delta/files/. /tmp/model-color/
           if [[ -s /tmp/phase13-delta/deletions.txt ]]; then
-            while IFS= read -r path; do
+            while IFS= read -r path || [[ -n "$path" ]]; do
               rm -f "/tmp/model-color/${path}"
             done < /tmp/phase13-delta/deletions.txt
           fi
+          test ! -e /tmp/model-color/app/src/main/java/com/bokoprin/modelcolor/data/segmentation/InteractiveSegmentationManager.kt
+          test ! -e /tmp/model-color/app/src/main/java/com/bokoprin/modelcolor/data/segmentation/MediaPipeInteractiveSegmentationManager.kt
 
           chmod +x /tmp/model-color/gradlew /tmp/model-color/scripts/*.sh
           grep -q 'versionName = "0.13.0"' /tmp/model-color/app/build.gradle.kts
@@ -104,6 +106,9 @@ jobs:
               text = imports + text
           path.write_text(text, encoding='utf-8')
           PY
+
+          find /tmp/model-color/app/src -name '*.kt' -type f -exec \
+            sed -i '/^import androidx\.compose\.foundation\.layout\.weight$/d' {} +
 
           sed -i 's/coreKtx = "1.19.0"/coreKtx = "1.17.0"/' /tmp/model-color/gradle/libs.versions.toml
           sed -i 's/activityCompose = "1.13.0"/activityCompose = "1.11.0"/' /tmp/model-color/gradle/libs.versions.toml
