@@ -22,14 +22,16 @@ jobs:
         run: |
           set -euo pipefail
           exec > >(tee /tmp/restore.log) 2>&1
-          mkdir -p /tmp/model-color /tmp/phase13-delta /tmp/restore-attempts
+          mkdir -p /tmp/model-color /tmp/phase13-delta
 
-          prefix=(
+          source_chunks=(
             .ci/model-color-source.b64.000
             .ci/model-color-source.b64.001
             .ci/model-color-source.b64.002
-          )
-          middle=(
+            .ci/model-color-source.b64.003
+            .ci/model-color-source.b64.003a
+            .ci/model-color-source.b64.003b
+            .ci/model-color-source.b64.003c
             .ci/model-color-source.b64.004
             .ci/model-color-source.b64.005
             .ci/model-color-source.b64.006
@@ -37,47 +39,23 @@ jobs:
             .ci/model-color-source.b64.008
             .ci/model-color-source.b64.009
             .ci/model-color-source.b64.010
+            .ci/model-color-source.b64.011
+            .ci/model-color-source.b64.012
           )
-          suffix=(.ci/model-color-source.b64.012)
-          variants003=(
-            '.ci/model-color-source.b64.003'
-            '.ci/model-color-source.b64.003 .ci/model-color-source.b64.003a .ci/model-color-source.b64.003b .ci/model-color-source.b64.003c'
-            '.ci/model-color-source.b64.003a .ci/model-color-source.b64.003b .ci/model-color-source.b64.003c'
-          )
-          variants011=(
-            '.ci/model-color-source.b64.011'
-            '.ci/model-color-source.b64.011a .ci/model-color-source.b64.011b .ci/model-color-source.b64.011d'
-            '.ci/model-color-source.b64.011 .ci/model-color-source.b64.011a .ci/model-color-source.b64.011b .ci/model-color-source.b64.011d'
-            '.ci/model-color-source.b64.011a .ci/model-color-source.b64.011b .ci/model-color-source.b64.011 .ci/model-color-source.b64.011d'
-          )
-
-          found=''
-          attempt=0
-          for v003 in "${variants003[@]}"; do
-            for v011 in "${variants011[@]}"; do
-              attempt=$((attempt + 1))
-              candidate="/tmp/restore-attempts/candidate-${attempt}"
-              echo "Restore attempt ${attempt}: 003=[${v003}] 011=[${v011}]"
-              cat "${prefix[@]}" $v003 "${middle[@]}" $v011 "${suffix[@]}" > "${candidate}.b64"
-              echo "base64_size=$(wc -c < "${candidate}.b64")"
-              if base64 --decode "${candidate}.b64" > "${candidate}.tar.gz" 2>"${candidate}.decode.err"; then
-                echo "archive_size=$(wc -c < "${candidate}.tar.gz") sha=$(sha256sum "${candidate}.tar.gz" | cut -d' ' -f1)"
-                if tar -tzf "${candidate}.tar.gz" >"${candidate}.tar.list" 2>"${candidate}.tar.err"; then
-                  found="${candidate}.tar.gz"
-                  echo "Valid Phase10 archive found on attempt ${attempt}."
-                  break 2
-                fi
-                echo "tar_error=$(tail -n 2 "${candidate}.tar.err" | tr '\n' ' ')"
-              else
-                echo "decode_error=$(cat "${candidate}.decode.err")"
-              fi
-            done
-          done
-          if [[ -z "$found" ]]; then
-            echo 'No valid Phase10 source archive combination was found.'
-            exit 1
-          fi
-          tar -xzf "$found" -C /tmp/model-color
+          cat "${source_chunks[@]}" | base64 --decode > /tmp/model-color-phase10.tar.gz
+          sha256sum /tmp/model-color-phase10.tar.gz
+          set +e
+          tar -xzf /tmp/model-color-phase10.tar.gz -C /tmp/model-color 2>/tmp/phase10-extract.err
+          extract_status=$?
+          set -e
+          echo "Phase10 extraction status=${extract_status}"
+          cat /tmp/phase10-extract.err
+          test -x /tmp/model-color/gradlew
+          test -f /tmp/model-color/app/build.gradle.kts
+          test -f /tmp/model-color/app/src/main/AndroidManifest.xml
+          source_count=$(find /tmp/model-color -type f | wc -l)
+          echo "Recovered Phase10 files=${source_count}"
+          test "$source_count" -ge 120
 
           delta_chunks=(
             .ci/phase13-build-delta.part-00
@@ -193,7 +171,7 @@ jobs:
           name: model-color-phase13-build-diagnostics
           path: |
             /tmp/restore.log
-            /tmp/restore-attempts
+            /tmp/phase10-extract.err
             /tmp/sdk-install.log
             /tmp/unit-test.log
             /tmp/lint.log
