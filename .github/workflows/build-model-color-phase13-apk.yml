@@ -21,6 +21,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          exec > >(tee /tmp/restore.log) 2>&1
           mkdir -p /tmp/model-color /tmp/phase13-delta /tmp/restore-attempts
 
           prefix=(
@@ -56,17 +57,26 @@ jobs:
             for v011 in "${variants011[@]}"; do
               attempt=$((attempt + 1))
               candidate="/tmp/restore-attempts/candidate-${attempt}"
+              echo "Restore attempt ${attempt}: 003=[${v003}] 011=[${v011}]"
               cat "${prefix[@]}" $v003 "${middle[@]}" $v011 "${suffix[@]}" > "${candidate}.b64"
-              if base64 --decode "${candidate}.b64" > "${candidate}.tar.gz" 2>/dev/null \
-                && tar -tzf "${candidate}.tar.gz" >/dev/null 2>&1; then
-                found="${candidate}.tar.gz"
-                echo "Valid Phase10 archive found on attempt ${attempt}."
-                sha256sum "$found"
-                break 2
+              echo "base64_size=$(wc -c < "${candidate}.b64")"
+              if base64 --decode "${candidate}.b64" > "${candidate}.tar.gz" 2>"${candidate}.decode.err"; then
+                echo "archive_size=$(wc -c < "${candidate}.tar.gz") sha=$(sha256sum "${candidate}.tar.gz" | cut -d' ' -f1)"
+                if tar -tzf "${candidate}.tar.gz" >"${candidate}.tar.list" 2>"${candidate}.tar.err"; then
+                  found="${candidate}.tar.gz"
+                  echo "Valid Phase10 archive found on attempt ${attempt}."
+                  break 2
+                fi
+                echo "tar_error=$(tail -n 2 "${candidate}.tar.err" | tr '\n' ' ')"
+              else
+                echo "decode_error=$(cat "${candidate}.decode.err")"
               fi
             done
           done
-          test -n "$found"
+          if [[ -z "$found" ]]; then
+            echo 'No valid Phase10 source archive combination was found.'
+            exit 1
+          fi
           tar -xzf "$found" -C /tmp/model-color
 
           delta_chunks=(
@@ -81,6 +91,7 @@ jobs:
             .ci/phase13-build-delta.part-08
             .ci/phase13-build-delta.part-09
           )
+          sha256sum "${delta_chunks[@]}"
           cat "${delta_chunks[@]}" | base64 --decode > /tmp/phase13-delta.tar.xz
           echo '219f9e1e399187bc35073fbc762d2f0e6dd90e05cac382960a59c545eabaa725  /tmp/phase13-delta.tar.xz' | sha256sum --check
           tar -xJf /tmp/phase13-delta.tar.xz -C /tmp/phase13-delta
@@ -181,6 +192,8 @@ jobs:
         with:
           name: model-color-phase13-build-diagnostics
           path: |
+            /tmp/restore.log
+            /tmp/restore-attempts
             /tmp/sdk-install.log
             /tmp/unit-test.log
             /tmp/lint.log
