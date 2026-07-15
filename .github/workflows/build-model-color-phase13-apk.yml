@@ -105,6 +105,11 @@ jobs:
           path.write_text(text, encoding='utf-8')
           PY
 
+          sed -i 's/coreKtx = "1.19.0"/coreKtx = "1.17.0"/' /tmp/model-color/gradle/libs.versions.toml
+          sed -i 's/activityCompose = "1.13.0"/activityCompose = "1.11.0"/' /tmp/model-color/gradle/libs.versions.toml
+          sed -i 's/lifecycle = "2.11.0"/lifecycle = "2.9.4"/' /tmp/model-color/gradle/libs.versions.toml
+          grep -nE 'coreKtx|activityCompose|lifecycle' /tmp/model-color/gradle/libs.versions.toml
+
           printf '\nandroid.newDsl=false\n' >> /tmp/model-color/gradle.properties
           tail -n 5 /tmp/model-color/gradle.properties
           sed -i 's/compileSdk = 37/compileSdk = 36/' /tmp/model-color/app/build.gradle.kts
