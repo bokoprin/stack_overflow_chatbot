@@ -86,11 +86,31 @@ jobs:
           test -f /tmp/model-color/app/src/main/java/com/bokoprin/modelcolor/data/segmentation/EdgeSamOnnxInteractiveMaskSegmenter.kt
           test -f /tmp/model-color/app/src/main/java/com/bokoprin/modelcolor/data/segmentation/SegmentationModelComparison.kt
           grep -q 'onnxruntime-android' /tmp/model-color/gradle/libs.versions.toml
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('/tmp/model-color/app/build.gradle.kts')
+          text = path.read_text(encoding='utf-8')
+          imports = (
+              'import java.net.URI\n'
+              'import java.nio.file.Files\n'
+              'import java.nio.file.StandardCopyOption\n\n'
+          )
+          if not text.startswith('import java.net.URI'):
+              text = imports + text
+          text = text.replace('java.net.URI', 'URI')
+          text = text.replace('java.nio.file.Files', 'Files')
+          text = text.replace('java.nio.file.StandardCopyOption', 'StandardCopyOption')
+          path.write_text(text, encoding='utf-8')
+          PY
+
           printf '\nandroid.newDsl=false\n' >> /tmp/model-color/gradle.properties
           tail -n 5 /tmp/model-color/gradle.properties
           sed -i 's/compileSdk = 37/compileSdk = 36/' /tmp/model-color/app/build.gradle.kts
           sed -i 's/targetSdk = 37/targetSdk = 36/' /tmp/model-color/app/build.gradle.kts
           grep -nE 'compileSdk|targetSdk|versionCode|versionName' /tmp/model-color/app/build.gradle.kts
+          grep -nE '^(import java|import URI|import Files|import Standard)' /tmp/model-color/app/build.gradle.kts | head
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
