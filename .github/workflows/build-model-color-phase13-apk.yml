@@ -109,6 +109,10 @@ jobs:
 
           find /tmp/model-color/app/src -name '*.kt' -type f -exec \
             sed -i '/^import androidx\.compose\.foundation\.layout\.weight$/d' {} +
+          sed -i \
+            -e 's/override fun migrate(database: SupportSQLiteDatabase)/override fun migrate(db: SupportSQLiteDatabase)/g' \
+            -e 's/database\.execSQL/db.execSQL/g' \
+            /tmp/model-color/app/src/main/java/com/bokoprin/modelcolor/data/database/AppDatabase.kt
 
           sed -i 's/coreKtx = "1.19.0"/coreKtx = "1.17.0"/' /tmp/model-color/gradle/libs.versions.toml
           sed -i 's/activityCompose = "1.13.0"/activityCompose = "1.11.0"/' /tmp/model-color/gradle/libs.versions.toml
