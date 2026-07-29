@@ -1,0 +1,158 @@
+t sternumCenter = centerOfObject(sternumMesh);
+        const spineCenter = spineMeshes.reduce((sum, mesh) => sum.add(centerOfObject(mesh)), new THREE.Vector3()).multiplyScalar(1 / spineMeshes.length);
+        const anterior = sternumCenter.sub(spineCenter);
+        group.rotateOnWorldAxis(new THREE.Vector3(0, 1, 0), -Math.atan2(anterior.x, anterior.z));
+        group.updateMatrixWorld(true);
+      }
+
+      // 画面座標では人体右を-X、人体左を+Xに統一する。
+      const rightClavicle = boneRegistry.get('clavicle-右')?.meshes[0];
+      const leftClavicle = boneRegistry.get('clavicle-左')?.meshes[0];
+      if (rightClavicle && leftClavicle && centerOfObject(rightClavicle).x > centerOfObject(leftClavicle).x) {
+        group.scale.x = -1;
+        group.updateMatrixWorld(true);
+      }
+
+      box = new THREE.Box3().setFromObject(group);
+      const height = box.getSize(new THREE.Vector3()).y;
+      const scale = height > 0 ? 12.8 / height : 1;
+      group.scale.multiplyScalar(scale);
+      group.updateMatrixWorld(true);
+      box = new THREE.Box3().setFromObject(group);
+      const center = box.getCenter(new THREE.Vector3());
+      group.position.x -= center.x;
+      group.position.z -= center.z;
+      group.position.y += -5.25 - box.min.y;
+      group.updateMatrixWorld(true);
+    }
+
+    function groupedFmaIds() {
+      const grouped = new Map();
+      for (const [boneId, fmaId] of BODY_PARTS_3D_PARTS) {
+        if (!grouped.has(boneId)) grouped.set(boneId, []);
+        grouped.get(boneId).push(fmaId);
+      }
+      return grouped;
+    }
+
+    function disposeObject(object) {
+      object.traverse(child => {
+        if (!child.isMesh) return;
+        child.geometry?.dispose();
+        if (Array.isArray(child.material)) child.material.forEach(material => material.dispose());
+        else child.material?.dispose();
+      });
+    }
+
+    function boneIdForMesh(mesh) {
+      let current = mesh;
+      while (current) {
+        if (BODY_PARTS_3D_LOGICAL_BONES.has(current.name)) return current.name;
+        current = current.parent;
+      }
+      return null;
+    }
+
+    let anatomicalLoadPromise = null;
+    async function loadBodyParts3DModel() {
+      if (anatomicalLoadPromise) return anatomicalLoadPromise;
+      anatomicalLoadPromise = (async () => {
+        updateModelStatus('内蔵全身骨格モデルを読み込み中');
+        let anatomicalGroup = null;
+        try {
+          const loader = new GLTFLoader();
+          const gltf = await loader.loadAsync(BUNDLED_MODEL_URL);
+          anatomicalGroup = gltf.scene;
+          anatomicalGroup.name = 'BodyParts3D-Full-Skeleton';
+          anatomicalGroup.visible = false;
+          scene.add(anatomicalGroup);
+
+          const fmaByBone = groupedFmaIds();
+          const meshesByBone = new Map([...BODY_PARTS_3D_LOGICAL_BONES].map(id => [id, []]));
+          anatomicalGroup.traverse(child => {
+            if (!child.isMesh) return;
+            const boneId = boneIdForMesh(child);
+            if (!boneId) return;
+            const record = boneRegistry.get(boneId);
+            if (!record) throw new Error(`未登録の骨ID: ${boneId}`);
+            if (Array.isArray(child.material)) child.material.forEach(material => material.dispose());
+            else child.material?.dispose();
+            child.material = boneMaterial();
+            child.castShadow = !IS_ANDROID_APP;
+            child.receiveShadow = !IS_ANDROID_APP;
+            child.userData.boneId = boneId;
+            child.userData.fmaIds = (fmaByBone.get(boneId) || []).map(id => `FMA${id}`);
+            child.userData.frontStructure = Boolean(record.options?.frontStructure);
+            child.userData.backStructure = Boolean(record.options?.backStructure);
+            meshesByBone.get(boneId).push(child);
+          });
+
+          const missing = [...BODY_PARTS_3D_LOGICAL_BONES].filter(id => !(meshesByBone.get(id)?.length));
+          if (missing.length) throw new Error(`GLBに不足している骨: ${missing.join(', ')}`);
+
+          for (const boneId of BODY_PARTS_3D_LOGICAL_BONES) {
+            boneRegistry.get(boneId).meshes = meshesByBone.get(boneId);
+          }
+          orientAndFitAnatomicalGroup(anatomicalGroup);
+          selectableMeshes.splice(0, selectableMeshes.length, ...[...meshesByBone.values()].flat());
+          if (window.__SKELETON_STATS__) {
+            window.__SKELETON_STATS__.selectableMeshes = selectableMeshes.length;
+            window.__SKELETON_STATS__.modelLoaded = true;
+          }
+          anatomicalGroup.visible = true;
+          applyVisualState();
+          setView('back');
+          updateModelStatus(`BodyParts3D全身高精細モデル ${BODY_PARTS_3D_LOGICAL_BONES.size}部位`, 'ready');
+          window.__ANATOMICAL_MODEL_READY__ = true;
+          window.__ANATOMICAL_MODEL_SOURCE__ = 'BodyParts3D / FMA / bundled GLB';
+          console.info(`SKELETON_RUNTIME_READY bones=${BODY_PARTS_3D_LOGICAL_BONES.size} selectable=${selectableMeshes.length}`);
+          if (window.__ANDROID_SMOKE_TEST__ === true) {
+            selectBone('femur-左', { openPanel: false });
+            markButton.click();
+            boneNote.value = 'Androidエミュレーター自動確認';
+            boneNote.dispatchEvent(new Event('input', { bubbles: true }));
+            window.setTimeout(() => {
+              console.info(`SKELETON_SMOKE_OK selected=${selectedBoneId} mark=${markButton.textContent} note=${boneNote.value}`);
+            }, 400);
+          }
+        } catch (error) {
+          console.error('Bundled BodyParts3D GLB loading failed.', error);
+          if (anatomicalGroup) {
+            scene.remove(anatomicalGroup);
+            disposeObject(anatomicalGroup);
+          }
+          anatomicalLoadPromise = null;
+          updateModelStatus('内蔵全身骨格モデルの読込に失敗', 'fallback');
+          errorBox.classList.remove('hidden');
+          errorBox.innerHTML = '<strong>内蔵された全身骨格モデルを読み込めませんでした。</strong><br>' +
+            `<small>${escapeHtml(error?.message || 'アプリを再起動してください。')}</small>`;
+          window.__ANATOMICAL_MODEL_READY__ = false;
+          window.__ANATOMICAL_MODEL_ERROR__ = String(error?.message || error);
+        }
+      })();
+      return anatomicalLoadPromise;
+    }
+
+    function loadSavedState() {
+      try {
+        const parsed = JSON.parse(localStorage.getItem('upperBodySkeletonMarks') || '{}');
+        return parsed && typeof parsed === 'object' ? parsed : {};
+      } catch (_) {
+        return {};
+      }
+    }
+
+    function saveState() {
+      try { localStorage.setItem('upperBodySkeletonMarks', JSON.stringify(saved)); } catch (_) {}
+    }
+
+    function applyVisualState() {
+      for (const bone of boneRegistry.values()) {
+        const isSelected = bone.id === selectedBoneId;
+        const isMarked = Boolean(saved[bone.id]?.marked);
+        for (const mesh of bone.meshes) {
+          const dimmed = backFocusEnabled && mesh.userData.frontStructure;
+          mesh.material.opacity = dimmed && !isSelected ? 0.10 : 1;
+          mesh.material.depthWrite = !(dimmed && !isSelected);
+          mesh.userData.pickDisabled = dimmed && !isSelected;
+          if (isSelec

@@ -1,0 +1,161 @@
+name: Build skeleton assets
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-assets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install mesh conversion dependencies
+        run: python3 -m pip install --disable-pip-version-check trimesh fast-simplification numpy scipy
+
+      - name: Build one optimized full-body GLB and local Three.js modules
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p work/stl out/model out/js/controls out/js/loaders out/js/utils
+          python3 - <<'PY'
+          from pathlib import Path
+          from urllib.request import Request, urlopen
+          import hashlib
+          import json
+          import time
+          import trimesh
+
+          source_commit = 'f0eeb6e843380cfe6b83797cf8c3e1af74de5e61'
+          base = f'https://raw.githubusercontent.com/Kevin-Mattheus-Moerman/BodyParts3D/{source_commit}/assets/BodyParts3D_data/stl/'
+          logical = json.loads(Path('tools/skeleton_manifest.json').read_text(encoding='utf-8'))['bones']
+          all_ids = sorted({fma_id for bone in logical for fma_id in bone['fmaIds']})
+
+          def download(url, target, attempts=5):
+              target = Path(target)
+              target.parent.mkdir(parents=True, exist_ok=True)
+              for attempt in range(1, attempts + 1):
+                  try:
+                      request = Request(url, headers={'User-Agent': 'HumanSkeletonAtlasAssetBuilder/1.0'})
+                      with urlopen(request, timeout=120) as response:
+                          data = response.read()
+                      if len(data) < 84:
+                          raise RuntimeError(f'too small: {len(data)} bytes')
+                      target.write_bytes(data)
+                      return data
+                  except Exception:
+                      if attempt == attempts:
+                          raise
+                      time.sleep(attempt * 2)
+
+          for index, fma_id in enumerate(all_ids, 1):
+              target = Path(f'work/stl/FMA{fma_id}.stl')
+              download(base + target.name, target)
+              print(f'download [{index}/{len(all_ids)}] {target.name}')
+
+          def target_faces(bone_id, original_faces):
+              if bone_id == 'skull': desired = 70000
+              elif bone_id.startswith(('hand-', 'foot-')): desired = 48000
+              elif bone_id.startswith('rib-'): desired = 5000
+              elif bone_id.startswith(('C', 'T', 'L')) and bone_id[1:].isdigit(): desired = 8500
+              elif bone_id in {'sacrum', 'sternum'}: desired = 22000
+              elif bone_id.startswith(('scapula-', 'pelvis-')): desired = 30000
+              elif bone_id.startswith(('femur-', 'tibia-')): desired = 26000
+              elif bone_id.startswith(('humerus-', 'radius-', 'ulna-', 'fibula-', 'clavicle-')): desired = 19000
+              elif bone_id.startswith('patella-'): desired = 9000
+              else: desired = 18000
+              return min(original_faces, desired)
+
+          def clean_mesh(mesh):
+              mesh.remove_unreferenced_vertices()
+              mesh.merge_vertices()
+              nondegenerate = mesh.nondegenerate_faces()
+              if nondegenerate is not None:
+                  mesh.update_faces(nondegenerate)
+              unique = mesh.unique_faces()
+              if unique is not None:
+                  mesh.update_faces(unique)
+              mesh.remove_unreferenced_vertices()
+              return mesh
+
+          scene = trimesh.Scene()
+          manifest_bones = []
+          total_before = 0
+          total_after = 0
+
+          for index, bone in enumerate(logical, 1):
+              parts = []
+              for fma_id in bone['fmaIds']:
+                  loaded = trimesh.load_mesh(f'work/stl/FMA{fma_id}.stl', file_type='stl', process=True)
+                  if isinstance(loaded, trimesh.Scene):
+                      loaded = loaded.to_geometry()
+                  if not isinstance(loaded, trimesh.Trimesh):
+                      raise TypeError(f'FMA{fma_id}: unexpected mesh type {type(loaded)}')
+                  parts.append(loaded)
+              mesh = clean_mesh(trimesh.util.concatenate(parts))
+              before = int(len(mesh.faces))
+              desired = target_faces(bone['id'], before)
+              if before > desired:
+                  try:
+                      simplified = mesh.simplify_quadric_decimation(face_count=desired)
+                      if isinstance(simplified, trimesh.Trimesh) and len(simplified.faces) >= max(100, desired // 3):
+                          mesh = simplified
+                  except Exception as exc:
+                      print(f'WARN simplify {bone["id"]}: {exc}')
+              mesh = clean_mesh(mesh)
+              mesh.fix_normals()
+              after = int(len(mesh.faces))
+              total_before += before
+              total_after += after
+              mesh.visual = trimesh.visual.ColorVisuals(mesh=mesh, face_colors=[234, 223, 202, 255])
+              scene.add_geometry(mesh, geom_name=bone['id'], node_name=bone['id'])
+              manifest_bones.append({
+                  'id': bone['id'], 'fmaIds': bone['fmaIds'],
+                  'trianglesOriginal': before, 'trianglesBundled': after,
+              })
+              print(f'build [{index}/{len(logical)}] {bone["id"]}: {before} -> {after} triangles')
+
+          glb = scene.export(file_type='glb')
+          glb_path = Path('out/model/full_skeleton.glb')
+          glb_path.write_bytes(glb)
+          if glb[:4] != b'glTF':
+              raise RuntimeError('invalid GLB magic')
+
+          model_manifest = {
+              'source': 'BodyParts3D', 'sourceCommit': source_commit,
+              'license': 'CC BY-SA 2.1 Japan',
+              'logicalBoneCount': len(manifest_bones),
+              'elementalMeshCount': len(all_ids),
+              'trianglesOriginal': total_before, 'trianglesBundled': total_after,
+              'glbBytes': len(glb), 'glbSha256': hashlib.sha256(glb).hexdigest(),
+              'bones': manifest_bones,
+          }
+          Path('out/model/model-manifest.json').write_text(
+              json.dumps(model_manifest, ensure_ascii=False, indent=2), encoding='utf-8'
+          )
+          print(json.dumps({k: model_manifest[k] for k in ['logicalBoneCount','elementalMeshCount','trianglesOriginal','trianglesBundled','glbBytes','glbSha256']}, indent=2))
+
+          modules = {
+              'out/js/three.module.js': 'https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js',
+              'out/js/controls/OrbitControls.js': 'https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/controls/OrbitControls.js',
+              'out/js/loaders/GLTFLoader.js': 'https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/loaders/GLTFLoader.js',
+              'out/js/utils/BufferGeometryUtils.js': 'https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/utils/BufferGeometryUtils.js',
+          }
+          for target, url in modules.items():
+              data = download(url, target)
+              print(f'{target}: {len(data)} bytes')
+          PY
+          du -sh out
+          ls -lh out/model
+
+      - name: Upload optimized skeleton bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: skeleton-glb-assets
+          path: out
+          compression-level: 6
+          if-no-files-found: error

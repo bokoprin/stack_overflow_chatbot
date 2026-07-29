@@ -1,0 +1,87 @@
+name: Android emulator smoke
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore application source and bundled model
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p android-smoke/app/project/assets
+          cat android-smoke/html-parts/*.part > android-smoke/app/project/assets/index.html
+          echo '77e3d986ea5d6cb9f58a6d1b48b496eca218e7013fe422e26b104ba61151b3cc  android-smoke/app/project/assets/index.html' | sha256sum -c -
+          gh run download 30434735489 -n skeleton-glb-assets -D /tmp/glb
+          gh run download 30435379719 -n three-runtime-r185 -D /tmp/three
+          mkdir -p android-smoke/app/project/assets/model android-smoke/app/project/assets/js
+          cp -a /tmp/glb/model/. android-smoke/app/project/assets/model/
+          cp -a /tmp/three/js/. android-smoke/app/project/assets/js/
+          test -s android-smoke/app/project/AndroidManifest.xml
+          test -s android-smoke/app/project/src/jp/openai/upperskeleton/MainActivity.java
+          test -s android-smoke/app/project/assets/index.html
+          test -s android-smoke/app/project/assets/model/full_skeleton.glb
+          test -s android-smoke/app/project/assets/js/three.module.js
+
+      - name: Build signed APK with installed Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$PWD/android-smoke/app"
+          PROJ="$ROOT/project"
+          BUILD="$ROOT/build"
+          BT="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          ANDROID_JAR="$(find "$ANDROID_HOME/platforms" -name android.jar | sort -V | tail -1)"
+          rm -rf "$BUILD"
+          mkdir -p "$BUILD/classes" "$BUILD/dex"
+          javac -encoding UTF-8 -source 8 -target 8 -bootclasspath "$ANDROID_JAR" \
+            -d "$BUILD/classes" \
+            "$PROJ/src/jp/openai/upperskeleton/MainActivity.java"
+          mapfile -t CLASSES < <(find "$BUILD/classes" -name '*.class' -print)
+          "$BT/d8" --min-api 23 --lib "$ANDROID_JAR" --output "$BUILD/dex" "${CLASSES[@]}"
+          "$BT/aapt2" compile --dir "$PROJ/res" -o "$BUILD/resources.zip"
+          "$BT/aapt2" link -I "$ANDROID_JAR" --manifest "$PROJ/AndroidManifest.xml" \
+            -A "$PROJ/assets" -o "$BUILD/unsigned.apk" "$BUILD/resources.zip"
+          (cd "$BUILD/dex" && zip -q -j "$BUILD/unsigned.apk" classes.dex)
+          keytool -genkeypair -noprompt -keystore "$BUILD/debug.keystore" \
+            -storepass android -keypass android -alias androiddebugkey \
+            -dname 'CN=Android Debug,O=Android,C=US' -keyalg RSA -keysize 2048 -validity 10000
+          "$BT/zipalign" -f 4 "$BUILD/unsigned.apk" "$BUILD/aligned.apk"
+          "$BT/apksigner" sign --ks "$BUILD/debug.keystore" --ks-pass pass:android \
+            --key-pass pass:android --out "$BUILD/skeleton.apk" "$BUILD/aligned.apk"
+          "$BT/apksigner" verify --verbose "$BUILD/skeleton.apk"
+          "$BT/zipalign" -c -v 4 "$BUILD/skeleton.apk"
+          echo "APK=$BUILD/skeleton.apk" >> "$GITHUB_ENV"
+
+      - name: Boot emulator and run WebView smoke test
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: sh android-smoke/run-smoke.sh
+
+      - name: Upload emulator evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-emulator-smoke
+          path: |
+            android-smoke/results
+            android-smoke/app/build/skeleton.apk
+          compression-level: 6
+          if-no-files-found: warn

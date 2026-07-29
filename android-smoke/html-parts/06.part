@@ -1,0 +1,110 @@
+> {
+      backFocusEnabled = false;
+      setView('back');
+      applyVisualState();
+    });
+
+    function setPanelOpen(open) {
+      infoPanel.classList.toggle('open', open);
+      mobileHandle.setAttribute('aria-expanded', String(open));
+      mobileHandle.textContent = open ? '骨の情報を閉じる' : '骨の情報を開く';
+    }
+    mobileHandle.addEventListener('click', () => setPanelOpen(!infoPanel.classList.contains('open')));
+    mobileHandle.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        mobileHandle.click();
+      }
+    });
+
+    function resize() {
+      const width = canvasHost.clientWidth;
+      const height = canvasHost.clientHeight;
+      if (!width || !height) return;
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+      renderer.setSize(width, height, false);
+    }
+    window.addEventListener('resize', resize);
+    if ('ResizeObserver' in window) new ResizeObserver(resize).observe(canvasHost);
+
+    function showFatalError(message, error) {
+      errorBox.classList.remove('hidden');
+      errorBox.innerHTML = `<strong>${escapeHtml(message)}</strong><br><small>${escapeHtml(error?.message || '')}</small>`;
+    }
+
+    renderer.domElement.addEventListener('webglcontextlost', event => {
+      event.preventDefault();
+      showFatalError('3D表示が停止しました。ページを再読み込みしてください。');
+    });
+
+    renderMarkedList();
+    applyVisualState();
+    resize();
+
+    let firstInteraction = false;
+    const hideHint = () => {
+      if (firstInteraction) return;
+      firstInteraction = true;
+      setTimeout(() => hint.style.opacity = '0', 1000);
+    };
+    renderer.domElement.addEventListener('pointerdown', hideHint, { once: true });
+    renderer.domElement.addEventListener('wheel', hideHint, { once: true, passive: true });
+
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    // 近似骨格は生成せず、APK内蔵の最適化済みBodyParts3D GLBだけを起動時に表示する。
+    updateModelStatus(ANDROID_SAFE_MODE ? '内蔵全身骨格を安定モードで読込中' : '内蔵全身骨格を読込中');
+    window.setTimeout(() => loadBodyParts3DModel(), 40);
+
+    window.addEventListener('unhandledrejection', event => {
+      console.error('Unhandled promise rejection', event.reason);
+    });
+
+    window.__APP_READY__ = true;
+    window.__SKELETON_STATS__ = {
+      bones: boneRegistry.size,
+      selectableMeshes: selectableMeshes.length,
+      vertebrae: [...boneRegistry.keys()].filter(id => /^[CTL]\d+$/.test(id)).length,
+      ribs: [...boneRegistry.keys()].filter(id => id.startsWith('rib-')).length,
+      threeRevision: THREE.REVISION,
+      anatomicalManifestBones: BODY_PARTS_3D_LOGICAL_BONES.size,
+      anatomicalElementalMeshes: BODY_PARTS_3D_PARTS.length,
+      bundledModelFiles: 1,
+      anatomicalSource: 'BodyParts3D / FMA / bundled GLB'
+    };
+    window.__selectBoneForTest = id => selectBone(id, { openPanel: false });
+    window.__setViewForTest = view => setView(view);
+    window.__boneScreenPointForTest = id => {
+      const record = boneRegistry.get(id);
+      const mesh = record?.meshes?.[0];
+      if (!mesh || !renderer) return null;
+      const point = new THREE.Box3().setFromObject(mesh).getCenter(new THREE.Vector3());
+      camera.updateMatrixWorld(true);
+      point.project(camera);
+      const rect = renderer.domElement.getBoundingClientRect();
+      return {
+        x: rect.left + (point.x + 1) * rect.width / 2,
+        y: rect.top + (1 - point.y) * rect.height / 2,
+        visible: point.z >= -1 && point.z <= 1
+      };
+    };
+  </script>
+  <script>
+    // APK内蔵ライブラリの読み込み失敗時にも、空画面のままにしない。
+    window.setTimeout(() => {
+      if (window.__APP_READY__) return;
+      const box = document.getElementById('errorBox');
+      if (!box) return;
+      box.classList.remove('hidden');
+      box.innerHTML = '<strong>APK内蔵の3Dライブラリを読み込めませんでした。</strong><br>' +
+        '<small>アプリを再起動してください。問題が続く場合は再インストールしてください。</small>';
+    }, 10000);
+  </script>
+</body>
+</html>
