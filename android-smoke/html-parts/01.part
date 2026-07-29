@@ -1,0 +1,170 @@
+x;
+      border-radius: 10px;
+      cursor: pointer;
+    }
+    .marked-item small { color: #fda4af; }
+    .marked-empty { color: var(--muted); font-size: 12px; }
+
+    .legend { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; color: var(--muted); font-size: 11px; }
+    .legend span { display: flex; align-items: center; gap: 7px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--bone); box-shadow: 0 0 0 1px rgba(255,255,255,.25); }
+    .dot.selected { background: var(--accent-2); }
+    .dot.marked { background: var(--danger); }
+
+    .mobile-handle { display: none; }
+    .error-box { position: absolute; inset: 20px; margin: auto; max-width: 560px; height: fit-content; z-index: 20; padding: 18px; border-radius: 14px; border: 1px solid rgba(251,113,133,.5); background: #28101a; color: #ffe4e9; }
+    .hidden { display: none !important; }
+
+    @media (max-width: 820px) {
+      #app { display: block; }
+      #viewer { height: 100%; }
+      aside {
+        position: fixed;
+        z-index: 10;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: min(47vh, 430px);
+        border-left: 0;
+        border-top: 1px solid var(--line);
+        border-radius: 20px 20px 0 0;
+        padding-top: 10px;
+        box-shadow: 0 -20px 45px rgba(0,0,0,.35);
+        transform: translateY(calc(100% - 58px));
+        transition: transform .25s ease;
+      }
+      aside.open { transform: translateY(0); }
+      .mobile-handle { display: flex; height: 38px; align-items: center; justify-content: center; cursor: pointer; color: var(--muted); font-size: 12px; }
+      .mobile-handle::before { content: ""; position: absolute; top: 7px; width: 46px; height: 4px; border-radius: 4px; background: rgba(148,163,184,.42); }
+      .topbar { align-items: flex-start; }
+      .brand p { display: none; }
+      .toolbar { max-width: 62%; }
+      .view-btn { padding: 8px 9px; font-size: 12px; }
+      .hint { bottom: 70px; font-size: 11px; }
+      .orientation { bottom: 72px; }
+    }
+
+    @media (max-width: 480px) {
+      .brand { padding: 9px 10px; }
+      .brand h1 { font-size: 13px; }
+      .toolbar { gap: 5px; }
+      .view-btn { padding: 7px 8px; }
+      .toolbar .text-wide { display: none; }
+    }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./js/three.module.js",
+        "three/addons/": "./js/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="app">
+    <main id="viewer" aria-label="全身骨格の3D表示">
+      <div id="canvasHost"></div>
+      <div class="topbar">
+        <div class="brand">
+          <h1>Human Skeleton Atlas</h1>
+          <p>BodyParts3D全身解剖モデル・骨をタップして確認</p>
+          <div id="modelStatus" class="model-status">内蔵高精細モデルを準備中</div>
+        </div>
+        <div class="toolbar" aria-label="表示方向">
+          <button class="view-btn active" data-view="back" type="button">背面</button>
+          <button class="view-btn" data-view="front" type="button">正面</button>
+          <button class="view-btn" data-view="left" type="button">左側</button>
+          <button class="view-btn" data-view="right" type="button">右側</button>
+          <button class="view-btn text-wide" id="resetView" type="button">リセット</button>
+        </div>
+      </div>
+      <div class="orientation" id="orientationLabel">後面</div>
+      <div class="hint" id="hint">ドラッグ：回転　ピンチ／ホイール：拡大　タップ：骨を選択</div>
+      <div id="errorBox" class="error-box hidden"></div>
+    </main>
+
+    <aside id="infoPanel" aria-label="骨の情報パネル">
+      <div class="mobile-handle" id="mobileHandle" role="button" tabindex="0" aria-expanded="false">骨の情報を開く</div>
+
+      <div class="section">
+        <h2>選択中の骨</h2>
+        <div id="selectedEmpty" class="empty-state">3Dモデル上の骨をタップしてください。</div>
+        <div id="selectedContent" class="hidden">
+          <h3 id="selectedName"></h3>
+          <span id="selectedCode"></span>
+          <div id="selectedCategory"></div>
+          <p id="selectedDescription"></p>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>骨の一覧から探す</h2>
+        <label for="boneSelect">名称を選ぶと、その骨を強調表示します</label>
+        <select id="boneSelect">
+          <option value="">骨を選択…</option>
+        </select>
+      </div>
+
+      <div class="section">
+        <h2>気になる位置の記録</h2>
+        <button id="markButton" class="action-btn primary" type="button" disabled>選択した骨を記録</button>
+        <div style="height:10px"></div>
+        <label for="boneNote">症状・押すと痛い位置などのメモ</label>
+        <textarea id="boneNote" placeholder="例：右側を押すと痛い、上を向くとつっぱる" disabled></textarea>
+      </div>
+
+      <div class="section">
+        <h2>記録した骨</h2>
+        <div id="markedList" class="marked-list"></div>
+        <div style="height:9px"></div>
+        <div class="row">
+          <button id="copyMarked" class="action-btn" type="button">一覧をコピー</button>
+          <button id="clearMarked" class="action-btn" type="button">全消去</button>
+        </div>
+      </div>
+
+
+      <div class="section credit">
+        <strong>モデルの根拠とライセンス</strong><br />
+        内蔵高精細表示は、DBCLSの成人男性3D解剖データ <strong>BodyParts3D</strong> の骨表面メッシュと、Foundational Model of Anatomy（FMA）の識別子に基づきます。<br />
+        “BodyParts3D - The Database Center for Life Science - CC BY-SA 2.1 Japan”。変換配布ミラー: Kevin Mattheus Moerman。アプリと派生モデル情報は同条件の継承ライセンスで提供します。
+      </div>
+
+      <div class="section">
+        <h2>表示</h2>
+        <div class="row">
+          <button id="backFocus" class="action-btn" type="button">背骨を見やすく</button>
+          <button id="showAll" class="action-btn" type="button">全て表示</button>
+        </div>
+        <div style="height:10px"></div>
+        <div class="legend">
+          <span><i class="dot"></i>通常</span>
+          <span><i class="dot selected"></i>選択中</span>
+          <span><i class="dot marked"></i>記録済み</span>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+    const canvasHost = document.getElementById('canvasHost');
+    const infoPanel = document.getElementById('infoPanel');
+    const mobileHandle = document.getElementById('mobileHandle');
+    const selectedEmpty = document.getElementById('selectedEmpty');
+    const selectedContent = document.getElementById('selectedContent');
+    const selectedName = document.getElementById('selectedName');
+    const selectedCode = document.getElementById('selectedCode');
+    const selectedCategory = document.getElementById('selectedCategory');
+    const selectedDescription = document.getElementById('selectedDescription');
+    const boneSelect = document.getElementById('boneSelect');
+    const markButton = document.getElementById('markButton');
+    const boneNote = document.getElementById('boneNote');
+    const markedList = document.getElementById('markedList');
+    const copyMarked = document.getElementById('copyMarked');
+    const clearMarked = document.getElementById('clearMarked');
+    const 
