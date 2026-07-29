@@ -1,0 +1,80 @@
+name: Android muscle atlas emulator smoke
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore Android container and bundled assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 origin automation/skeleton-assets-20260729
+          git checkout FETCH_HEAD -- android-smoke/app/project
+          rm -rf android-smoke/app/project/assets
+          mkdir -p android-smoke/app/project/assets/model android-smoke/app/project/assets/js
+          gh run download 30434735489 -n skeleton-glb-assets -D /tmp/bone
+          gh run download 30453718350 -n bodyparts3d-muscle-glb -D /tmp/muscle
+          gh run download 30435379719 -n three-runtime-r185 -D /tmp/three
+          cp /tmp/bone/model/full_skeleton.glb android-smoke/app/project/assets/model/
+          cp /tmp/muscle/full_muscles.glb android-smoke/app/project/assets/model/
+          cp -a /tmp/three/js/. android-smoke/app/project/assets/js/
+          cat > android-smoke/app/project/assets/index.html <<'HTML'
+          <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body,#v{margin:0;width:100%;height:100%;overflow:hidden;background:#07101d}#s{position:fixed;z-index:2;left:8px;top:8px;color:white;background:#172033dd;padding:10px;border-radius:10px;font:14px sans-serif}</style><script type="importmap">{"imports":{"three":"./js/three.module.js","three/addons/":"./js/"}}</script></head><body><div id="s">loading</div><div id="v"></div><script type="module">
+          import * as THREE from 'three';import{GLTFLoader}from'three/addons/loaders/GLTFLoader.js';
+          const host=document.querySelector('#v'),status=document.querySelector('#s');
+          const scene=new THREE.Scene();const camera=new THREE.PerspectiveCamera(40,innerWidth/innerHeight,.1,100);camera.position.set(0,0,-18);
+          const renderer=new THREE.WebGLRenderer({antialias:false,powerPreference:'default'});renderer.setPixelRatio(1);renderer.setSize(innerWidth,innerHeight);host.appendChild(renderer.domElement);
+          scene.add(new THREE.HemisphereLight(0xffffff,0x223344,2));const loader=new GLTFLoader();
+          const [bones,muscles]=await Promise.all([loader.loadAsync('./model/full_skeleton.glb'),loader.loadAsync('./model/full_muscles.glb')]);
+          const root=new THREE.Group();root.add(bones.scene,muscles.scene);scene.add(root);const b=new Map(),m=new Map();
+          bones.scene.traverse(x=>{if(x.isMesh){let n=x;while(n&&!/^(skull|sacrum|sternum|[CTL]\d+|rib-|clavicle-|scapula-|pelvis-|humerus-|radius-|ulna-|hand-|femur-|patella-|tibia-|fibula-|foot-)/.test(n.name))n=n.parent;if(n){x.material=new THREE.MeshStandardMaterial({color:0xeadfca});b.set(n.name,x)}}});
+          muscles.scene.traverse(x=>{if(x.isMesh){let n=x;while(n&&n.name.indexOf('-')<0)n=n.parent;if(n){x.material=new THREE.MeshStandardMaterial({color:0xc74f4f,transparent:true,opacity:.58,depthWrite:false});m.set(n.name,x)}}});
+          root.updateMatrixWorld(true);let box=new THREE.Box3().setFromObject(root),size=box.getSize(new THREE.Vector3());if(size.z>size.y)root.rotation.x=-Math.PI/2;root.updateMatrixWorld(true);box=new THREE.Box3().setFromObject(root);root.scale.multiplyScalar(12.5/box.getSize(new THREE.Vector3()).y);root.updateMatrixWorld(true);box=new THREE.Box3().setFromObject(root);const c=box.getCenter(new THREE.Vector3());root.position.set(-c.x,-c.y,-c.z);
+          m.forEach(x=>x.visible=false);const t4=b.get('T4'),trap=m.get('trapezius-left');if(!t4||!trap)throw new Error('required nodes missing');t4.material.color.set(0xf59e0b);trap.visible=true;trap.material.color.set(0x38bdf8);trap.material.opacity=.34;renderer.render(scene,camera);
+          status.textContent=`bones=${b.size} muscles=${m.size}`;console.info(`ANDROID_ANATOMY_READY bones=${b.size} muscles=${m.size} boneMode=${t4.visible&&trap.visible&&trap.material.opacity===.34}`);
+          m.forEach(x=>{x.visible=true;x.material.opacity=.09});trap.material.color.set(0xf59e0b);trap.material.opacity=.52;b.forEach(x=>x.visible=false);t4.visible=true;t4.material.color.set(0x38bdf8);renderer.render(scene,camera);console.info(`ANDROID_MUSCLE_MODE selected=trapezius-left attached=T4 opacity=${trap.material.opacity}`);
+          function loop(){renderer.render(scene,camera);requestAnimationFrame(loop)}loop();
+          </script></body></html>
+          HTML
+      - name: Build signed APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROJ="$PWD/android-smoke/app/project"; BUILD="$PWD/android-smoke/app/build"
+          BT="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"; ANDROID_JAR="$(find "$ANDROID_HOME/platforms" -name android.jar | sort -V | tail -1)"
+          rm -rf "$BUILD";mkdir -p "$BUILD/classes" "$BUILD/dex"
+          javac -encoding UTF-8 -source 8 -target 8 -bootclasspath "$ANDROID_JAR" -d "$BUILD/classes" "$PROJ/src/jp/openai/upperskeleton/MainActivity.java"
+          mapfile -t C < <(find "$BUILD/classes" -name '*.class');"$BT/d8" --min-api 23 --lib "$ANDROID_JAR" --output "$BUILD/dex" "${C[@]}"
+          "$BT/aapt2" compile --dir "$PROJ/res" -o "$BUILD/resources.zip"
+          "$BT/aapt2" link -I "$ANDROID_JAR" --manifest "$PROJ/AndroidManifest.xml" -A "$PROJ/assets" -o "$BUILD/unsigned.apk" "$BUILD/resources.zip"
+          (cd "$BUILD/dex"&&zip -q -j "$BUILD/unsigned.apk" classes.dex)
+          keytool -genkeypair -noprompt -keystore "$BUILD/key.jks" -storepass android -keypass android -alias key -dname 'CN=Smoke' -keyalg RSA -keysize 2048 -validity 1000
+          "$BT/zipalign" -f 4 "$BUILD/unsigned.apk" "$BUILD/aligned.apk";"$BT/apksigner" sign --ks "$BUILD/key.jks" --ks-pass pass:android --key-pass pass:android --out "$BUILD/app.apk" "$BUILD/aligned.apk"
+          echo "APK=$BUILD/app.apk" >> "$GITHUB_ENV"
+      - name: Run on Android 11 emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: sh -c 'mkdir -p android-smoke/results; adb logcat -c; adb install -r "$APK"; adb shell am start -W -n jp.openai.upperskeleton.fixed2/jp.openai.upperskeleton.MainActivity > android-smoke/results/start.txt; i=0; while [ $i -lt 90 ]; do adb logcat -d -s SkeletonWebView:I "*:S" > android-smoke/results/webview.txt || true; grep -q ANDROID_MUSCLE_MODE android-smoke/results/webview.txt && break; i=$((i+1)); sleep 2; done; adb logcat -d > android-smoke/results/logcat.txt; grep -q "ANDROID_ANATOMY_READY bones=75 muscles=104 boneMode=true" android-smoke/results/webview.txt; grep -q "ANDROID_MUSCLE_MODE selected=trapezius-left attached=T4 opacity=0.52" android-smoke/results/webview.txt; ! grep -q "FATAL EXCEPTION" android-smoke/results/logcat.txt; adb exec-out screencap -p > android-smoke/results/emulator.png; adb shell dumpsys meminfo jp.openai.upperskeleton.fixed2 > android-smoke/results/meminfo.txt'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-muscle-emulator-smoke
+          path: android-smoke/results
+          if-no-files-found: warn
