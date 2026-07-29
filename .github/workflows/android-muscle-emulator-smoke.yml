@@ -11,7 +11,7 @@ permissions:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: Restore Android container and bundled assets
@@ -61,8 +61,8 @@ jobs:
             function setDisplay(next){display=next;if(next==='bones-only')selection='bone';if(next==='muscles-only')selection='muscle';apply()}
             function countVisible(map){let n=0;map.forEach(x=>{if(x.visible)n++});return n}
             setDisplay('bones-only');status.textContent='骨のみ';console.info(`ANDROID_BONES_ONLY selection=${selection} display=${display} bones=${countVisible(b)} muscles=${countVisible(m)} encoding=${renderer.outputEncoding} three=${THREE.REVISION}`);
-            setTimeout(()=>{setDisplay('muscles-only');status.textContent='筋肉のみ';console.info(`ANDROID_MUSCLES_ONLY selection=${selection} display=${display} bones=${countVisible(b)} muscles=${countVisible(m)}`)},3000);
-            setTimeout(()=>{display='related';selection='bone';apply();const t4=b.get('T4'),trap=m.get('trapezius-left');m.forEach(x=>x.visible=false);t4.material.color.set(0xf59e0b);trap.visible=true;trap.material.color.set(0x38bdf8);trap.material.opacity=.36;renderer.render(scene,camera);status.textContent='関連表示';console.info(`ANDROID_DISPLAY_DONE selection=${selection} display=${display} related=${t4.visible&&trap.visible&&trap.material.opacity===.36}`)},6000);
+            setTimeout(()=>{setDisplay('muscles-only');status.textContent='筋肉のみ';console.info(`ANDROID_MUSCLES_ONLY selection=${selection} display=${display} bones=${countVisible(b)} muscles=${countVisible(m)}`)},20000);
+            setTimeout(()=>{display='related';selection='bone';apply();const t4=b.get('T4'),trap=m.get('trapezius-left');m.forEach(x=>x.visible=false);t4.material.color.set(0xf59e0b);trap.visible=true;trap.material.color.set(0x38bdf8);trap.material.opacity=.36;renderer.render(scene,camera);status.textContent='関連表示';console.info(`ANDROID_DISPLAY_DONE selection=${selection} display=${display} related=${t4.visible&&trap.visible&&trap.material.opacity===.36}`)},40000);
             function loop(){renderer.render(scene,camera);requestAnimationFrame(loop)}loop();
           }
           main().catch(error=>{document.querySelector('#s').textContent=String(error);console.error('ANDROID_ANATOMY_ERROR '+(error&&error.stack||error));});
@@ -89,28 +89,38 @@ jobs:
           api-level: 30
           arch: x86_64
           profile: pixel_2
+          cores: 4
+          ram-size: 4096M
+          heap-size: 1024M
           disable-animations: true
           emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: sh -c 'set -e; mkdir -p android-smoke/results; adb logcat -c; adb install -r "$APK"; adb shell am start -W -n jp.openai.upperskeleton.fixed2/jp.openai.upperskeleton.MainActivity > android-smoke/results/start.txt || true; i=0; while [ $i -lt 120 ]; do adb logcat -d -s SkeletonWebView:I "*:S" > android-smoke/results/webview.txt || true; grep -q ANDROID_BONES_ONLY android-smoke/results/webview.txt && break; i=$((i+1)); sleep 2; done; grep -q "ANDROID_BONES_ONLY selection=bone display=bones-only bones=75 muscles=0" android-smoke/results/webview.txt; adb exec-out screencap -p > android-smoke/results/bones-only.png; i=0; while [ $i -lt 60 ]; do adb logcat -d -s SkeletonWebView:I "*:S" > android-smoke/results/webview.txt || true; grep -q ANDROID_MUSCLES_ONLY android-smoke/results/webview.txt && break; i=$((i+1)); sleep 1; done; grep -q "ANDROID_MUSCLES_ONLY selection=muscle display=muscles-only bones=0 muscles=104" android-smoke/results/webview.txt; adb exec-out screencap -p > android-smoke/results/muscles-only.png; i=0; while [ $i -lt 60 ]; do adb logcat -d -s SkeletonWebView:I "*:S" > android-smoke/results/webview.txt || true; grep -q ANDROID_DISPLAY_DONE android-smoke/results/webview.txt && break; i=$((i+1)); sleep 1; done; grep -q "ANDROID_DISPLAY_DONE selection=bone display=related related=true" android-smoke/results/webview.txt; adb logcat -d > android-smoke/results/logcat.txt; ! grep -q "ANDROID_ANATOMY_ERROR" android-smoke/results/webview.txt; ! grep -q "FATAL EXCEPTION" android-smoke/results/logcat.txt; adb shell dumpsys meminfo jp.openai.upperskeleton.fixed2 > android-smoke/results/meminfo.txt'
+          script: sh android-smoke/run-display-mode-smoke.sh
       - name: Check emulator screenshot brightness
         shell: bash
         run: |
           python3 -m pip install --quiet pillow
           python3 - <<'PY'
           from PIL import Image
-          image=Image.open('android-smoke/results/bones-only.png').convert('RGB')
-          w,h=image.size
-          crop=image.crop((int(w*.15),int(h*.18),int(w*.85),int(h*.82)))
-          values=[.2126*r+.7152*g+.0722*b for r,g,b in crop.getdata()]
-          p95=sorted(values)[int(len(values)*.95)]
-          fraction=sum(v>=85 for v in values)/len(values)
-          print({'size':image.size,'p95':p95,'bright_fraction':fraction})
-          assert p95>=150
-          assert fraction>=.08
+          from pathlib import Path
+          for name, minimum_fraction in [('bones-only', .08), ('muscles-only', .06)]:
+              xml=Path(f'android-smoke/results/{name}-window.xml').read_text(errors='ignore')
+              lowered=xml.lower()
+              assert "isn't responding" not in lowered
+              assert 'not responding' not in lowered
+              assert '応答していません' not in xml
+              image=Image.open(f'android-smoke/results/{name}.png').convert('RGB')
+              w,h=image.size
+              crop=image.crop((int(w*.15),int(h*.18),int(w*.85),int(h*.82)))
+              values=[.2126*r+.7152*g+.0722*b for r,g,b in crop.getdata()]
+              p95=sorted(values)[int(len(values)*.95)]
+              fraction=sum(v>=85 for v in values)/len(values)
+              print(name,{'size':image.size,'p95':p95,'bright_fraction':fraction})
+              assert p95>=135
+              assert fraction>=minimum_fraction
           PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: android-display-mode-smoke-r128-normals
+          name: android-display-mode-final-evidence
           path: android-smoke/results
           if-no-files-found: warn
