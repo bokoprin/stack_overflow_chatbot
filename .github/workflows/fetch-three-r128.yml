@@ -1,0 +1,39 @@
+name: Fetch Three.js r128 runtime
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download Three.js r128 ES modules
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/js/controls out/js/loaders out/js/utils
+          base='https://unpkg.com/three@0.128.0'
+          curl -fL --retry 4 "$base/build/three.module.js" -o out/js/three.module.js
+          curl -fL --retry 4 "$base/examples/jsm/controls/OrbitControls.js" -o out/js/controls/OrbitControls.js
+          curl -fL --retry 4 "$base/examples/jsm/loaders/GLTFLoader.js" -o out/js/loaders/GLTFLoader.js
+          curl -fL --retry 4 "$base/examples/jsm/utils/BufferGeometryUtils.js" -o out/js/utils/BufferGeometryUtils.js
+          curl -fL --retry 4 "$base/examples/jsm/utils/SkeletonUtils.js" -o out/js/utils/SkeletonUtils.js
+          sed -i "s/from 'three'/from '..\/three.module.js'/" out/js/controls/OrbitControls.js
+          sed -i "s/from 'three'/from '..\/three.module.js'/" out/js/loaders/GLTFLoader.js
+          sed -i "s/from 'three'/from '..\/three.module.js'/" out/js/utils/BufferGeometryUtils.js
+          sed -i "s/from 'three'/from '..\/three.module.js'/" out/js/utils/SkeletonUtils.js
+          grep -q "REVISION = '128'" out/js/three.module.js
+          ! grep -R "from 'three'" out/js
+          sha256sum $(find out/js -type f | sort) > out/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: three-runtime-r128
+          path: out
+          compression-level: 6
+          if-no-files-found: error
