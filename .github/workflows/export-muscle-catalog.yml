@@ -22,12 +22,12 @@ jobs:
           curl -fsSL "$base/isa_parts_list_e.txt" -o out/isa_parts_list_e.txt
           curl -fsSL "$base/isa_inclusion_relation_list.txt" -o out/isa_inclusion_relation_list.txt
           curl -fsSL "$base/isa_element_parts.txt" -o out/isa_element_parts.txt
-      - name: Build skeletal muscle catalog
+      - name: Build catalogs
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          import csv, json
+          import json
 
           root = Path('out')
           names = {}
@@ -66,23 +66,30 @@ jobs:
                   if len(cols) >= 3:
                       elements.setdefault(cols[0], []).append(cols[2])
 
-          records = []
-          for concept in sorted(descendants, key=lambda x: int(x[3:]) if x.startswith('FMA') and x[3:].isdigit() else 10**9):
-              elem = sorted(set(elements.get(concept, [])))
-              if elem:
-                  records.append({
-                      'conceptId': concept,
-                      'representationId': reps.get(concept),
-                      'name': names.get(concept, ''),
-                      'elementIds': elem,
-                  })
-          (root/'muscle-catalog.json').write_text(json.dumps(records, indent=2), encoding='utf-8')
-          (root/'muscle-catalog.tsv').write_text(
-              'concept_id\trepresentation_id\tname\telement_ids\n' +
-              ''.join(f"{r['conceptId']}\t{r['representationId']}\t{r['name']}\t{','.join(r['elementIds'])}\n" for r in records),
-              encoding='utf-8'
-          )
-          print('muscle concepts with meshes:', len(records))
+          def records_for(concepts):
+              records = []
+              for concept in sorted(concepts, key=lambda x: int(x[3:]) if x.startswith('FMA') and x[3:].isdigit() else 10**9):
+                  elem = sorted(set(elements.get(concept, [])))
+                  if elem:
+                      records.append({
+                          'conceptId': concept,
+                          'representationId': reps.get(concept),
+                          'name': names.get(concept, ''),
+                          'elementIds': elem,
+                      })
+              return records
+
+          muscle_records = records_for(descendants)
+          all_records = records_for(set(elements))
+          for stem, records in [('muscle-catalog', muscle_records), ('all-concepts', all_records)]:
+              (root/f'{stem}.json').write_text(json.dumps(records, indent=2), encoding='utf-8')
+              (root/f'{stem}.tsv').write_text(
+                  'concept_id\trepresentation_id\tname\telement_ids\n' +
+                  ''.join(f"{r['conceptId']}\t{r['representationId']}\t{r['name']}\t{','.join(r['elementIds'])}\n" for r in records),
+                  encoding='utf-8'
+              )
+          print('muscle concepts with meshes:', len(muscle_records))
+          print('all concepts with meshes:', len(all_records))
           PY
       - uses: actions/upload-artifact@v4
         with:
@@ -90,4 +97,6 @@ jobs:
           path: |
             out/muscle-catalog.json
             out/muscle-catalog.tsv
+            out/all-concepts.json
+            out/all-concepts.tsv
           compression-level: 6
