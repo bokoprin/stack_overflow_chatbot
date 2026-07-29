@@ -1,0 +1,109 @@
+name: Build skeleton assets
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-assets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Download BodyParts3D skeleton meshes and Three.js modules
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/anatomy out/js
+          python3 - <<'PY'
+          from pathlib import Path
+          from urllib.request import Request, urlopen
+          import hashlib, json, time
+
+          upper = [
+            52734,52735,52736,52738,52739,52740,52748,52788,52789,52892,52893,
+            53645,53646,53647,53648,53649,53650,53655,53656,54737,54738,9710,
+            12519,12520,12521,12522,12523,12524,12525,
+            9165,9187,9209,9248,9922,9945,9968,9991,10014,10037,10059,10081,
+            13072,13073,13074,13075,13076,16202,
+            7857,7987,7882,8012,7909,8039,7957,8148,8066,8093,8175,8202,
+            8229,8256,8283,8310,8364,8391,8445,8472,8531,8532,8533,8534,
+            7486,7487,7488,13322,13323,13395,13396,16586,16587,23130,23131,
+            23464,23465,23467,23468,
+            24435,24437,24439,24441,24443,23725,24446,24448,24464,24466,
+            24468,24470,24472,24450,24451,24452,24453,24454,24455,24456,
+            24457,24458,24459,24460,24461,24462,24463,
+            24436,24438,24440,24442,24444,24445,24447,24449,24465,24467,
+            24469,24471,24473,65470,71915,71908,71916,66791,23938,23940,
+            23942,23944,23951,23953,23955,23957,23959,
+          ]
+          lower = [
+            24474,24475,24486,24487,24477,24478,24480,24481,
+            24482,24483,24497,24498,24500,24501,
+            24521,24522,24523,24524,24525,24526,24528,24529,
+            24507,24508,24509,24510,24511,24512,24513,24514,24515,24516,
+            43253,43254,32634,32635,32636,32637,32638,32639,32640,32641,
+            32642,32643,32644,32645,32646,32647,
+            32650,32651,32652,32653,32654,32655,32656,32657,32658,32659,
+          ]
+          ids = sorted(set(upper + lower))
+          commit = 'f0eeb6e843380cfe6b83797cf8c3e1af74de5e61'
+          base = f'https://raw.githubusercontent.com/Kevin-Mattheus-Moerman/BodyParts3D/{commit}/assets/BodyParts3D_data/stl/'
+
+          def download(url, target, attempts=5):
+              target = Path(target)
+              for attempt in range(1, attempts + 1):
+                  try:
+                      req = Request(url, headers={'User-Agent': 'SkeletonAtlasAssetBuilder/1.0'})
+                      with urlopen(req, timeout=90) as response:
+                          data = response.read()
+                      if len(data) < 84:
+                          raise RuntimeError(f'too small: {len(data)} bytes')
+                      target.write_bytes(data)
+                      return data
+                  except Exception:
+                      if attempt == attempts:
+                          raise
+                      time.sleep(attempt * 2)
+
+          records = []
+          for index, fma_id in enumerate(ids, 1):
+              path = Path(f'out/anatomy/FMA{fma_id}.stl')
+              data = download(base + path.name, path)
+              records.append({
+                  'fmaId': fma_id,
+                  'file': f'anatomy/{path.name}',
+                  'bytes': len(data),
+                  'sha256': hashlib.sha256(data).hexdigest(),
+              })
+              print(f'[{index}/{len(ids)}] {path.name}: {len(data)}')
+
+          js = {
+              'three.module.js': 'https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js',
+              'OrbitControls.js': 'https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/controls/OrbitControls.js',
+              'STLLoader.js': 'https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/loaders/STLLoader.js',
+              'BufferGeometryUtils.js': 'https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/utils/BufferGeometryUtils.js',
+          }
+          for name, url in js.items():
+              data = download(url, Path('out/js') / name)
+              print(f'{name}: {len(data)}')
+
+          Path('out/anatomy-manifest.json').write_text(json.dumps({
+              'source': 'BodyParts3D',
+              'sourceCommit': commit,
+              'license': 'CC BY-SA 2.1 Japan',
+              'meshCount': len(records),
+              'meshes': records,
+          }, ensure_ascii=False, indent=2), encoding='utf-8')
+          print(f'Total meshes: {len(records)}')
+          PY
+          du -sh out
+      - name: Upload skeleton asset bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: skeleton-assets
+          path: out
+          compression-level: 6
+          if-no-files-found: error
