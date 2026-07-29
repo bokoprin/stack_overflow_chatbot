@@ -1,0 +1,216 @@
+足部の骨（${sideName}）`, `FOOT ${sideName}`, '足', '距骨・踵骨・舟状骨・楔状骨・立方骨、中足骨および足趾骨をまとめた足部骨格です。');
+    }
+
+    // 骨一覧をカテゴリ順に作成
+    const categoryOrder = ['頭部','頸椎','胸椎','腰椎','骨盤・脊柱','胸郭','肋骨','肩帯','肩帯・背部','骨盤','上肢','前腕','手','大腿','膝','下腿','足'];
+    const grouped = new Map();
+    for (const bone of boneRegistry.values()) {
+      if (!grouped.has(bone.category)) grouped.set(bone.category, []);
+      grouped.get(bone.category).push(bone);
+    }
+    for (const category of categoryOrder) {
+      const bones = grouped.get(category);
+      if (!bones) continue;
+      const optgroup = document.createElement('optgroup');
+      optgroup.label = category;
+      for (const bone of bones) {
+        const option = document.createElement('option');
+        option.value = bone.id;
+        option.textContent = bone.code ? `${bone.name}［${bone.code}］` : bone.name;
+        optgroup.appendChild(option);
+      }
+      boneSelect.appendChild(optgroup);
+    }
+
+
+    // BodyParts3D / FMA に対応した実在骨表面メッシュ。各STLは同じ全身座標系を共有する。
+    const BUNDLED_MODEL_URL = './model/full_skeleton.glb';
+    const BODY_PARTS_3D_PARTS = [
+      ['skull', 52734],
+      ['skull', 52735],
+      ['skull', 52736],
+      ['skull', 52738],
+      ['skull', 52739],
+      ['skull', 52740],
+      ['skull', 52748],
+      ['skull', 52788],
+      ['skull', 52789],
+      ['skull', 52892],
+      ['skull', 52893],
+      ['skull', 53645],
+      ['skull', 53646],
+      ['skull', 53647],
+      ['skull', 53648],
+      ['skull', 53649],
+      ['skull', 53650],
+      ['skull', 53655],
+      ['skull', 53656],
+      ['skull', 54737],
+      ['skull', 54738],
+      ['skull', 9710],
+      ['C1', 12519],
+      ['C2', 12520],
+      ['C3', 12521],
+      ['C4', 12522],
+      ['C5', 12523],
+      ['C6', 12524],
+      ['C7', 12525],
+      ['T1', 9165],
+      ['T2', 9187],
+      ['T3', 9209],
+      ['T4', 9248],
+      ['T5', 9922],
+      ['T6', 9945],
+      ['T7', 9968],
+      ['T8', 9991],
+      ['T9', 10014],
+      ['T10', 10037],
+      ['T11', 10059],
+      ['T12', 10081],
+      ['L1', 13072],
+      ['L2', 13073],
+      ['L3', 13074],
+      ['L4', 13075],
+      ['L5', 13076],
+      ['sacrum', 16202],
+      ['rib-1-右', 7857],
+      ['rib-1-左', 7987],
+      ['rib-2-右', 7882],
+      ['rib-2-左', 8012],
+      ['rib-3-右', 7909],
+      ['rib-3-左', 8039],
+      ['rib-4-右', 7957],
+      ['rib-4-左', 8148],
+      ['rib-5-右', 8066],
+      ['rib-5-左', 8093],
+      ['rib-6-右', 8175],
+      ['rib-6-左', 8202],
+      ['rib-7-右', 8229],
+      ['rib-7-左', 8256],
+      ['rib-8-右', 8283],
+      ['rib-8-左', 8310],
+      ['rib-9-右', 8364],
+      ['rib-9-左', 8391],
+      ['rib-10-右', 8445],
+      ['rib-10-左', 8472],
+      ['rib-11-右', 8531],
+      ['rib-11-左', 8532],
+      ['rib-12-右', 8533],
+      ['rib-12-左', 8534],
+      ['sternum', 7486],
+      ['sternum', 7487],
+      ['sternum', 7488],
+      ['clavicle-右', 13322],
+      ['clavicle-左', 13323],
+      ['scapula-右', 13395],
+      ['scapula-左', 13396],
+      ['pelvis-右', 16586],
+      ['pelvis-左', 16587],
+      ['humerus-右', 23130],
+      ['humerus-左', 23131],
+      ['radius-右', 23464],
+      ['radius-左', 23465],
+      ['ulna-右', 23467],
+      ['ulna-左', 23468],
+      ['hand-右', 24435],
+      ['hand-右', 24437],
+      ['hand-右', 24439],
+      ['hand-右', 24441],
+      ['hand-右', 24443],
+      ['hand-右', 23725],
+      ['hand-右', 24446],
+      ['hand-右', 24448],
+      ['hand-右', 24464],
+      ['hand-右', 24466],
+      ['hand-右', 24468],
+      ['hand-右', 24470],
+      ['hand-右', 24472],
+      ['hand-右', 24450],
+      ['hand-右', 24451],
+      ['hand-右', 24452],
+      ['hand-右', 24453],
+      ['hand-右', 24454],
+      ['hand-右', 24455],
+      ['hand-右', 24456],
+      ['hand-右', 24457],
+      ['hand-右', 24458],
+      ['hand-右', 24459],
+      ['hand-右', 24460],
+      ['hand-右', 24461],
+      ['hand-右', 24462],
+      ['hand-右', 24463],
+      ['hand-左', 24436],
+      ['hand-左', 24438],
+      ['hand-左', 24440],
+      ['hand-左', 24442],
+      ['hand-左', 24444],
+      ['hand-左', 24445],
+      ['hand-左', 24447],
+      ['hand-左', 24449],
+      ['hand-左', 24465],
+      ['hand-左', 24467],
+      ['hand-左', 24469],
+      ['hand-左', 24471],
+      ['hand-左', 24473],
+      ['hand-左', 65470],
+      ['hand-左', 71915],
+      ['hand-左', 71908],
+      ['hand-左', 71916],
+      ['hand-左', 66791],
+      ['hand-左', 23938],
+      ['hand-左', 23940],
+      ['hand-左', 23942],
+      ['hand-左', 23944],
+      ['hand-左', 23951],
+      ['hand-左', 23953],
+      ['hand-左', 23955],
+      ['hand-左', 23957],
+      ['hand-左', 23959],
+      ['femur-右', 24474],
+      ['femur-左', 24475],
+      ['patella-右', 24486],
+      ['patella-左', 24487],
+      ['tibia-右', 24477],
+      ['tibia-左', 24478],
+      ['fibula-右', 24480],
+      ['fibula-左', 24481],
+      ['foot-右', 24482], ['foot-右', 24497], ['foot-右', 24500],
+      ['foot-右', 24521], ['foot-右', 24523], ['foot-右', 24525], ['foot-右', 24528],
+      ['foot-右', 24507], ['foot-右', 24509], ['foot-右', 24511], ['foot-右', 24513], ['foot-右', 24515],
+      ['foot-右', 43253], ['foot-右', 32634], ['foot-右', 32636], ['foot-右', 32638], ['foot-右', 32640],
+      ['foot-右', 32642], ['foot-右', 32644], ['foot-右', 32646],
+      ['foot-右', 32650], ['foot-右', 32652], ['foot-右', 32654], ['foot-右', 32656], ['foot-右', 32658],
+      ['foot-左', 24483], ['foot-左', 24498], ['foot-左', 24501],
+      ['foot-左', 24522], ['foot-左', 24524], ['foot-左', 24526], ['foot-左', 24529],
+      ['foot-左', 24508], ['foot-左', 24510], ['foot-左', 24512], ['foot-左', 24514], ['foot-左', 24516],
+      ['foot-左', 43254], ['foot-左', 32635], ['foot-左', 32637], ['foot-左', 32639], ['foot-左', 32641],
+      ['foot-左', 32643], ['foot-左', 32645], ['foot-左', 32647],
+      ['foot-左', 32651], ['foot-左', 32653], ['foot-左', 32655], ['foot-左', 32657], ['foot-左', 32659],
+    ];
+    const BODY_PARTS_3D_LOGICAL_BONES = new Set(BODY_PARTS_3D_PARTS.map(([boneId]) => boneId));
+
+    function centerOfObject(object) {
+      const box = new THREE.Box3().setFromObject(object);
+      return box.getCenter(new THREE.Vector3());
+    }
+
+    function updateModelStatus(text, state = '') {
+      modelStatus.textContent = text;
+      modelStatus.classList.remove('ready', 'fallback');
+      if (state) modelStatus.classList.add(state);
+    }
+
+    function orientAndFitAnatomicalGroup(group) {
+      group.updateMatrixWorld(true);
+      let box = new THREE.Box3().setFromObject(group);
+      const initialSize = box.getSize(new THREE.Vector3());
+      const largestAxis = initialSize.x > initialSize.y && initialSize.x > initialSize.z ? 'x' : (initialSize.z > initialSize.y ? 'z' : 'y');
+      if (largestAxis === 'z') group.rotation.x = -Math.PI / 2;
+      else if (largestAxis === 'x') group.rotation.z = Math.PI / 2;
+      group.updateMatrixWorld(true);
+
+      // 胸骨を胸椎より前（+Z）に合わせ、正面・背面ボタンの意味を人体方向と一致させる。
+      const sternumMesh = boneRegistry.get('sternum')?.meshes[0];
+      const spineMeshes = ['T4', 'T6', 'T8', 'T10'].map(id => boneRegistry.get(id)?.meshes[0]).filter(Boolean);
+      if (sternumMesh && spineMeshes.length) {
+        cons
