@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install mesh conversion dependencies
-        run: python3 -m pip install --disable-pip-version-check trimesh fast-simplification numpy
+        run: python3 -m pip install --disable-pip-version-check trimesh fast-simplification numpy scipy
 
       - name: Build one optimized full-body GLB and local Three.js modules
         shell: bash
