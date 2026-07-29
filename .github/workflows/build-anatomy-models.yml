@@ -38,6 +38,10 @@ jobs:
           out.mkdir(exist_ok=True)
           bone_map = json.loads((root/'muscle-atlas/bone-fma-map.json').read_text(encoding='utf-8'))['bones']
           muscle_map = json.loads((root/'muscle-atlas/muscle-mesh-map.json').read_text(encoding='utf-8'))['muscles']
+          # Release 4.0 uses a non-M element ID for the left sternocleidomastoid.
+          for record in muscle_map:
+              if record['id'] == 'sternocleidomastoid-left':
+                  record['elementIds'] = ['FJ1573']
 
           concept_elements: dict[str, list[str]] = {}
           with (root/'work/isa_element_parts.txt').open(encoding='utf-8') as f:
