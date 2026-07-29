@@ -1,0 +1,180 @@
+ted) {
+            mesh.material.color.copy(selectedColor);
+            mesh.material.emissive.set(0x8a4300);
+            mesh.material.emissiveIntensity = 0.5;
+          } else if (isMarked) {
+            mesh.material.color.copy(markedColor);
+            mesh.material.emissive.set(0x66152b);
+            mesh.material.emissiveIntensity = 0.38;
+          } else {
+            mesh.material.color.copy(baseColor);
+            mesh.material.emissive.set(0x000000);
+            mesh.material.emissiveIntensity = 0;
+          }
+          mesh.material.needsUpdate = true;
+        }
+      }
+    }
+
+    function selectBone(id, { openPanel = true } = {}) {
+      const bone = boneRegistry.get(id);
+      if (!bone) return;
+      selectedBoneId = id;
+      selectedEmpty.classList.add('hidden');
+      selectedContent.classList.remove('hidden');
+      selectedName.textContent = bone.name;
+      selectedCode.textContent = bone.code || '';
+      selectedCategory.textContent = bone.category;
+      selectedDescription.textContent = bone.description;
+      boneSelect.value = id;
+      markButton.disabled = false;
+      boneNote.disabled = false;
+      boneNote.value = saved[id]?.note || '';
+      updateMarkButton();
+      applyVisualState();
+      if (openPanel && window.matchMedia('(max-width: 820px)').matches) setPanelOpen(true);
+    }
+
+    function updateMarkButton() {
+      if (!selectedBoneId) return;
+      const marked = Boolean(saved[selectedBoneId]?.marked);
+      markButton.textContent = marked ? '記録から外す' : '選択した骨を記録';
+      markButton.classList.toggle('marked', marked);
+      markButton.classList.toggle('primary', !marked);
+    }
+
+    function renderMarkedList() {
+      markedList.innerHTML = '';
+      const markedBones = [...boneRegistry.values()].filter(b => saved[b.id]?.marked);
+      if (!markedBones.length) {
+        const empty = document.createElement('div');
+        empty.className = 'marked-empty';
+        empty.textContent = 'まだ記録はありません。';
+        markedList.appendChild(empty);
+      } else {
+        for (const bone of markedBones) {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'marked-item';
+          const note = saved[bone.id]?.note?.trim();
+          button.innerHTML = `<span>${escapeHtml(bone.name)}</span><small>${escapeHtml(note ? 'メモあり' : bone.code)}</small>`;
+          button.addEventListener('click', () => selectBone(bone.id));
+          markedList.appendChild(button);
+        }
+      }
+      copyMarked.disabled = markedBones.length === 0;
+      clearMarked.disabled = markedBones.length === 0;
+    }
+
+    function escapeHtml(value) {
+      return String(value || '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+    }
+
+    markButton.addEventListener('click', () => {
+      if (!selectedBoneId) return;
+      saved[selectedBoneId] ||= {};
+      saved[selectedBoneId].marked = !saved[selectedBoneId].marked;
+      if (!saved[selectedBoneId].marked && !saved[selectedBoneId].note) delete saved[selectedBoneId];
+      saveState();
+      updateMarkButton();
+      renderMarkedList();
+      applyVisualState();
+    });
+
+    let noteTimer;
+    boneNote.addEventListener('input', () => {
+      if (!selectedBoneId) return;
+      clearTimeout(noteTimer);
+      noteTimer = setTimeout(() => {
+        saved[selectedBoneId] ||= {};
+        saved[selectedBoneId].note = boneNote.value.trim();
+        if (!saved[selectedBoneId].marked && !saved[selectedBoneId].note) delete saved[selectedBoneId];
+        saveState();
+        renderMarkedList();
+      }, 180);
+    });
+
+    boneSelect.addEventListener('change', () => {
+      if (boneSelect.value) selectBone(boneSelect.value);
+    });
+
+    copyMarked.addEventListener('click', async () => {
+      const lines = [...boneRegistry.values()]
+        .filter(b => saved[b.id]?.marked)
+        .map(b => `・${b.name}${b.code ? `（${b.code}）` : ''}${saved[b.id]?.note ? `：${saved[b.id].note}` : ''}`);
+      const text = ['気になる骨・位置の記録', ...lines, '', '※自己記録であり、診断結果ではありません。'].join('\n');
+      try {
+        await navigator.clipboard.writeText(text);
+        const old = copyMarked.textContent;
+        copyMarked.textContent = 'コピーしました';
+        setTimeout(() => copyMarked.textContent = old, 1400);
+      } catch (_) {
+        window.prompt('下の内容をコピーしてください', text);
+      }
+    });
+
+    clearMarked.addEventListener('click', () => {
+      if (!confirm('記録した骨とメモをすべて消去しますか？')) return;
+      for (const key of Object.keys(saved)) delete saved[key];
+      saveState();
+      if (selectedBoneId) boneNote.value = '';
+      updateMarkButton();
+      renderMarkedList();
+      applyVisualState();
+    });
+
+    document.getElementById('backFocus').addEventListener('click', () => {
+      backFocusEnabled = true;
+      setView('back');
+      applyVisualState();
+    });
+    document.getElementById('showAll').addEventListener('click', () => {
+      backFocusEnabled = false;
+      applyVisualState();
+    });
+
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    let pointerDown = null;
+
+    renderer.domElement.addEventListener('pointerdown', event => {
+      pointerDown = { x: event.clientX, y: event.clientY, time: performance.now() };
+    });
+    renderer.domElement.addEventListener('pointerup', event => {
+      if (!pointerDown) return;
+      const moved = Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y);
+      const elapsed = performance.now() - pointerDown.time;
+      pointerDown = null;
+      if (moved > 8 || elapsed > 600) return;
+      pickBone(event.clientX, event.clientY);
+    });
+
+    function pickBone(clientX, clientY) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, camera);
+      const hits = raycaster.intersectObjects(selectableMeshes, false).filter(hit => !hit.object.userData.pickDisabled);
+      if (hits.length) selectBone(hits[0].object.userData.boneId);
+    }
+
+    const viewPositions = {
+      back: { pos: [0, 1.25, -20], label: '後面' },
+      front: { pos: [0, 1.25, 20], label: '前面' },
+      left: { pos: [20, 1.25, 0], label: '左側面' },
+      right: { pos: [-20, 1.25, 0], label: '右側面' }
+    };
+
+    function setView(view) {
+      const target = viewPositions[view] || viewPositions.back;
+      camera.position.set(...target.pos);
+      controls.target.set(0, 1.15, 0.25);
+      controls.update();
+      orientationLabel.textContent = target.label;
+      document.querySelectorAll('.view-btn[data-view]').forEach(btn => btn.classList.toggle('active', btn.dataset.view === view));
+    }
+
+    document.querySelectorAll('.view-btn[data-view]').forEach(button => {
+      button.addEventListener('click', () => setView(button.dataset.view));
+    });
+    document.getElementById('resetView').addEventListener('click', () =
