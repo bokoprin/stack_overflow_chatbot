@@ -1,0 +1,32 @@
+name: Fetch Three runtime
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  fetch-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Fetch exact Three.js r185 runtime modules
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/js/controls out/js/loaders out/js/utils
+          curl --fail --location --retry 4 -o out/js/three.module.js https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js
+          curl --fail --location --retry 4 -o out/js/three.core.js https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.core.js
+          curl --fail --location --retry 4 -o out/js/controls/OrbitControls.js https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/controls/OrbitControls.js
+          curl --fail --location --retry 4 -o out/js/loaders/GLTFLoader.js https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/loaders/GLTFLoader.js
+          curl --fail --location --retry 4 -o out/js/utils/BufferGeometryUtils.js https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/utils/BufferGeometryUtils.js
+          curl --fail --location --retry 4 -o out/js/utils/SkeletonUtils.js https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/utils/SkeletonUtils.js
+          find out -type f -printf '%p %s bytes\n'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: three-runtime-r185
+          path: out
+          compression-level: 6
+          if-no-files-found: error
