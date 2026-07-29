@@ -1,0 +1,100 @@
+name: Build BodyParts3D muscle GLB from STL mirror
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install mesh conversion dependencies
+        shell: bash
+        run: python3 -m pip install --disable-pip-version-check trimesh==4.8.1 fast-simplification==0.1.12 numpy==2.3.2 scipy==1.16.1 networkx==3.5
+      - name: Download and build muscles
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p work/stl out
+          python3 - <<'PY'
+          from pathlib import Path
+          from urllib.request import Request, urlopen
+          import hashlib, json, time
+          import trimesh
+
+          source_commit='f0eeb6e843380cfe6b83797cf8c3e1af74de5e61'
+          base=f'https://raw.githubusercontent.com/Kevin-Mattheus-Moerman/BodyParts3D/{source_commit}/assets/BodyParts3D_data/stl/'
+          records=json.loads(Path('muscle-atlas/muscle-fma-map.json').read_text(encoding='utf-8'))['muscles']
+          all_ids=sorted({fma for r in records for fma in r['fmaIds']})
+
+          def download(url,target,attempts=5):
+              target=Path(target); target.parent.mkdir(parents=True,exist_ok=True)
+              for attempt in range(1,attempts+1):
+                  try:
+                      req=Request(url,headers={'User-Agent':'HumanMusculoskeletalAtlasBuilder/1.0'})
+                      with urlopen(req,timeout=120) as response:data=response.read()
+                      if len(data)<84:raise RuntimeError(f'too small: {len(data)}')
+                      target.write_bytes(data); return data
+                  except Exception:
+                      if attempt==attempts:raise
+                      time.sleep(attempt*2)
+
+          for index,fma in enumerate(all_ids,1):
+              name=f'FMA{fma}.stl'; download(base+name,Path('work/stl')/name)
+              print(f'download [{index}/{len(all_ids)}] {name}')
+
+          def clean(mesh):
+              mesh.remove_unreferenced_vertices(); mesh.merge_vertices()
+              mask=mesh.nondegenerate_faces()
+              if mask is not None:mesh.update_faces(mask)
+              unique=mesh.unique_faces()
+              if unique is not None:mesh.update_faces(unique)
+              mesh.remove_unreferenced_vertices(); return mesh
+
+          large_prefixes=('gluteus-','pectoralis-major-','trapezius-','deltoid-','external-oblique-','adductor-magnus-')
+          medium_prefixes=('quadriceps','rectus-femoris-','vastus-','biceps-femoris-','gastrocnemius-','longissimus-','iliocostalis-','semispinalis-')
+          def target_faces(record,before):
+              rid=record['id']
+              desired=32000 if rid.startswith(large_prefixes) else 24000 if rid.startswith(medium_prefixes) else 16000
+              if record['layer']=='deep':desired=min(desired,18000)
+              return min(before,desired)
+
+          scene=trimesh.Scene(); manifest=[]; total_before=0; total_after=0
+          for index,record in enumerate(records,1):
+              parts=[]
+              for fma in record['fmaIds']:
+                  loaded=trimesh.load_mesh(f'work/stl/FMA{fma}.stl',file_type='stl',process=True)
+                  if isinstance(loaded,trimesh.Scene):loaded=loaded.to_geometry()
+                  if not isinstance(loaded,trimesh.Trimesh):raise TypeError((record['id'],type(loaded)))
+                  parts.append(loaded)
+              mesh=clean(trimesh.util.concatenate(parts))
+              before=int(len(mesh.faces)); desired=target_faces(record,before)
+              if before>desired:
+                  try:
+                      simplified=mesh.simplify_quadric_decimation(face_count=desired)
+                      if isinstance(simplified,trimesh.Trimesh) and len(simplified.faces)>=max(100,desired//3):mesh=simplified
+                  except Exception as exc:print(f'WARN simplify {record["id"]}: {exc}')
+              mesh=clean(mesh); mesh.fix_normals(); after=int(len(mesh.faces))
+              total_before+=before; total_after+=after
+              mesh.visual=trimesh.visual.ColorVisuals(mesh=mesh,face_colors=[199,79,79,255])
+              scene.add_geometry(mesh,geom_name=record['id'],node_name=record['id'])
+              manifest.append({'id':record['id'],'layer':record['layer'],'fmaIds':record['fmaIds'],'trianglesOriginal':before,'trianglesBundled':after})
+              print(f'build [{index}/{len(records)}] {record["id"]}: {before} -> {after}')
+
+          glb=scene.export(file_type='glb'); Path('out/full_muscles.glb').write_bytes(glb)
+          info={'source':'BodyParts3D','sourceCommit':source_commit,'license':'CC BY-SA 2.1 Japan','kind':'muscle','logicalCount':len(records),'elementalMeshCount':len(all_ids),'trianglesOriginal':total_before,'trianglesBundled':total_after,'bytes':len(glb),'sha256':hashlib.sha256(glb).hexdigest(),'records':manifest}
+          Path('out/full_muscles-manifest.json').write_text(json.dumps(info,ensure_ascii=False,indent=2),encoding='utf-8')
+          print(json.dumps({k:info[k] for k in ['logicalCount','elementalMeshCount','trianglesOriginal','trianglesBundled','bytes','sha256']},indent=2))
+          PY
+          test -s out/full_muscles.glb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bodyparts3d-muscle-glb
+          path: out
+          compression-level: 6
+          if-no-files-found: error
