@@ -31,7 +31,6 @@ jobs:
           from __future__ import annotations
           import io, json, hashlib, zipfile
           from pathlib import Path
-          import numpy as np
           import trimesh
 
           root = Path('.')
@@ -68,7 +67,7 @@ jobs:
               else:
                   mesh = loaded
               mesh.remove_unreferenced_vertices()
-              mesh.fix_normals(multibody=True)
+              _ = mesh.vertex_normals
               mesh_cache[element_id] = mesh.copy()
               return mesh
 
@@ -77,7 +76,7 @@ jobs:
               pieces = [load_element(eid) for eid in unique]
               mesh = pieces[0].copy() if len(pieces) == 1 else trimesh.util.concatenate(pieces)
               mesh.remove_unreferenced_vertices()
-              mesh.fix_normals(multibody=True)
+              _ = mesh.vertex_normals
               return mesh
 
           def build_scene(records: list[dict], element_resolver, filename: str, kind: str):
