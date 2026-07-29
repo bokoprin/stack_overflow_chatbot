@@ -1,0 +1,93 @@
+name: Export BodyParts3D muscle catalog
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  catalog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download BodyParts3D metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          base='https://dbarchive.biosciencedbc.jp/data/bodyparts3d/LATEST'
+          curl -fsSL "$base/isa_parts_list_e.txt" -o out/isa_parts_list_e.txt
+          curl -fsSL "$base/isa_inclusion_relation_list.txt" -o out/isa_inclusion_relation_list.txt
+          curl -fsSL "$base/isa_element_parts.txt" -o out/isa_element_parts.txt
+      - name: Build skeletal muscle catalog
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import csv, json
+
+          root = Path('out')
+          names = {}
+          reps = {}
+          with (root/'isa_parts_list_e.txt').open(encoding='utf-8') as f:
+              next(f)
+              for line in f:
+                  cols = line.rstrip('\n').split('\t')
+                  if len(cols) >= 3:
+                      names[cols[0]] = cols[2]
+                      reps[cols[0]] = cols[1]
+
+          children = {}
+          with (root/'isa_inclusion_relation_list.txt').open(encoding='utf-8') as f:
+              next(f)
+              for line in f:
+                  cols = line.rstrip('\n').split('\t')
+                  if len(cols) >= 4:
+                      children.setdefault(cols[0], set()).add(cols[2])
+
+          descendants = set()
+          stack = ['FMA5022']
+          while stack:
+              node = stack.pop()
+              for child in children.get(node, ()):
+                  if child not in descendants:
+                      descendants.add(child)
+                      stack.append(child)
+          descendants.add('FMA5022')
+
+          elements = {}
+          with (root/'isa_element_parts.txt').open(encoding='utf-8') as f:
+              next(f)
+              for line in f:
+                  cols = line.rstrip('\n').split('\t')
+                  if len(cols) >= 3:
+                      elements.setdefault(cols[0], []).append(cols[2])
+
+          records = []
+          for concept in sorted(descendants, key=lambda x: int(x[3:]) if x.startswith('FMA') and x[3:].isdigit() else 10**9):
+              elem = sorted(set(elements.get(concept, [])))
+              if elem:
+                  records.append({
+                      'conceptId': concept,
+                      'representationId': reps.get(concept),
+                      'name': names.get(concept, ''),
+                      'elementIds': elem,
+                  })
+          (root/'muscle-catalog.json').write_text(json.dumps(records, indent=2), encoding='utf-8')
+          (root/'muscle-catalog.tsv').write_text(
+              'concept_id\trepresentation_id\tname\telement_ids\n' +
+              ''.join(f"{r['conceptId']}\t{r['representationId']}\t{r['name']}\t{','.join(r['elementIds'])}\n" for r in records),
+              encoding='utf-8'
+          )
+          print('muscle concepts with meshes:', len(records))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bodyparts3d-muscle-catalog
+          path: |
+            out/muscle-catalog.json
+            out/muscle-catalog.tsv
+          compression-level: 6
