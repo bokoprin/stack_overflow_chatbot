@@ -23,7 +23,7 @@ jobs:
           curl -fL --retry 4 --retry-delay 3 "$base/isa_BP3D_4.0_obj_99.zip" -o work/isa_BP3D_4.0_obj_99.zip
       - name: Install mesh tools
         shell: bash
-        run: python3 -m pip install --disable-pip-version-check trimesh==4.8.1 numpy==2.3.2
+        run: python3 -m pip install --disable-pip-version-check trimesh==4.8.1 numpy==2.3.2 scipy==1.16.1 networkx==3.5
       - name: Convert selected meshes
         shell: bash
         run: |
