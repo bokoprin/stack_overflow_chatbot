@@ -30,9 +30,13 @@ jobs:
           cp /tmp/bone/model/full_skeleton.glb android-smoke/app/project/assets/model/
           cp /tmp/muscle/full_muscles.glb android-smoke/app/project/assets/model/
           cp -a /tmp/three/js/. android-smoke/app/project/assets/js/
+          sed -i "s/from 'three'/from '..\/three.module.js'/" android-smoke/app/project/assets/js/controls/OrbitControls.js
+          sed -i "s/from 'three'/from '..\/three.module.js'/" android-smoke/app/project/assets/js/loaders/GLTFLoader.js
+          sed -i "s/from 'three'/from '..\/three.module.js'/" android-smoke/app/project/assets/js/utils/BufferGeometryUtils.js
+          sed -i "s/from 'three'/from '..\/three.module.js'/" android-smoke/app/project/assets/js/utils/SkeletonUtils.js
           cat > android-smoke/app/project/assets/index.html <<'HTML'
-          <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body,#v{margin:0;width:100%;height:100%;overflow:hidden;background:#07101d}#s{position:fixed;z-index:2;left:8px;top:8px;color:white;background:#172033dd;padding:10px;border-radius:10px;font:14px sans-serif}</style><script type="importmap">{"imports":{"three":"./js/three.module.js","three/addons/":"./js/"}}</script></head><body><div id="s">loading</div><div id="v"></div><script type="module">
-          import * as THREE from 'three';import{GLTFLoader}from'three/addons/loaders/GLTFLoader.js';
+          <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body,#v{margin:0;width:100%;height:100%;overflow:hidden;background:#07101d}#s{position:fixed;z-index:2;left:8px;top:8px;color:white;background:#172033dd;padding:10px;border-radius:10px;font:14px sans-serif}</style></head><body><div id="s">loading</div><div id="v"></div><script type="module">
+          import * as THREE from './js/three.module.js';import{GLTFLoader}from'./js/loaders/GLTFLoader.js';
           async function main(){
             const host=document.querySelector('#v'),status=document.querySelector('#s');
             const scene=new THREE.Scene();const camera=new THREE.PerspectiveCamera(40,innerWidth/innerHeight,.1,100);camera.position.set(0,0,-18);
