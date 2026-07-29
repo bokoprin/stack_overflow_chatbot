@@ -18,7 +18,7 @@ adb shell am start -W -n "$PACKAGE/$ACTIVITY" > "$RESULTS/start.txt" || true
 
 wait_for_log() {
   pattern="$1"
-  limit="$2"
+  limit="${2:-120}"
   i=0
   while [ "$i" -lt "$limit" ]; do
     adb logcat -d -s SkeletonWebView:I '*:S' > "$RESULTS/webview.txt" || true
