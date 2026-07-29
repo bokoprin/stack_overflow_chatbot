@@ -28,7 +28,6 @@ jobs:
           import hashlib
           import json
           import time
-          import numpy as np
           import trimesh
 
           source_commit = 'f0eeb6e843380cfe6b83797cf8c3e1af74de5e61'
@@ -59,27 +58,29 @@ jobs:
               print(f'download [{index}/{len(all_ids)}] {target.name}')
 
           def target_faces(bone_id, original_faces):
-              if bone_id == 'skull':
-                  desired = 70000
-              elif bone_id.startswith(('hand-', 'foot-')):
-                  desired = 48000
-              elif bone_id.startswith('rib-'):
-                  desired = 5000
-              elif bone_id.startswith(('C', 'T', 'L')) and bone_id[1:].isdigit():
-                  desired = 8500
-              elif bone_id in {'sacrum', 'sternum'}:
-                  desired = 22000
-              elif bone_id.startswith(('scapula-', 'pelvis-')):
-                  desired = 30000
-              elif bone_id.startswith(('femur-', 'tibia-')):
-                  desired = 26000
-              elif bone_id.startswith(('humerus-', 'radius-', 'ulna-', 'fibula-', 'clavicle-')):
-                  desired = 19000
-              elif bone_id.startswith('patella-'):
-                  desired = 9000
-              else:
-                  desired = 18000
+              if bone_id == 'skull': desired = 70000
+              elif bone_id.startswith(('hand-', 'foot-')): desired = 48000
+              elif bone_id.startswith('rib-'): desired = 5000
+              elif bone_id.startswith(('C', 'T', 'L')) and bone_id[1:].isdigit(): desired = 8500
+              elif bone_id in {'sacrum', 'sternum'}: desired = 22000
+              elif bone_id.startswith(('scapula-', 'pelvis-')): desired = 30000
+              elif bone_id.startswith(('femur-', 'tibia-')): desired = 26000
+              elif bone_id.startswith(('humerus-', 'radius-', 'ulna-', 'fibula-', 'clavicle-')): desired = 19000
+              elif bone_id.startswith('patella-'): desired = 9000
+              else: desired = 18000
               return min(original_faces, desired)
+
+          def clean_mesh(mesh):
+              mesh.remove_unreferenced_vertices()
+              mesh.merge_vertices()
+              nondegenerate = mesh.nondegenerate_faces()
+              if nondegenerate is not None:
+                  mesh.update_faces(nondegenerate)
+              unique = mesh.unique_faces()
+              if unique is not None:
+                  mesh.update_faces(unique)
+              mesh.remove_unreferenced_vertices()
+              return mesh
 
           scene = trimesh.Scene()
           manifest_bones = []
@@ -91,15 +92,11 @@ jobs:
               for fma_id in bone['fmaIds']:
                   loaded = trimesh.load_mesh(f'work/stl/FMA{fma_id}.stl', file_type='stl', process=True)
                   if isinstance(loaded, trimesh.Scene):
-                      loaded = loaded.dump(concatenate=True)
+                      loaded = loaded.to_geometry()
                   if not isinstance(loaded, trimesh.Trimesh):
                       raise TypeError(f'FMA{fma_id}: unexpected mesh type {type(loaded)}')
                   parts.append(loaded)
-              mesh = trimesh.util.concatenate(parts)
-              mesh.remove_unreferenced_vertices()
-              mesh.merge_vertices()
-              mesh.remove_degenerate_faces()
-              mesh.remove_duplicate_faces()
+              mesh = clean_mesh(trimesh.util.concatenate(parts))
               before = int(len(mesh.faces))
               desired = target_faces(bone['id'], before)
               if before > desired:
@@ -109,7 +106,7 @@ jobs:
                           mesh = simplified
                   except Exception as exc:
                       print(f'WARN simplify {bone["id"]}: {exc}')
-              mesh.remove_unreferenced_vertices()
+              mesh = clean_mesh(mesh)
               mesh.fix_normals()
               after = int(len(mesh.faces))
               total_before += before
@@ -117,10 +114,8 @@ jobs:
               mesh.visual = trimesh.visual.ColorVisuals(mesh=mesh, face_colors=[234, 223, 202, 255])
               scene.add_geometry(mesh, geom_name=bone['id'], node_name=bone['id'])
               manifest_bones.append({
-                  'id': bone['id'],
-                  'fmaIds': bone['fmaIds'],
-                  'trianglesOriginal': before,
-                  'trianglesBundled': after,
+                  'id': bone['id'], 'fmaIds': bone['fmaIds'],
+                  'trianglesOriginal': before, 'trianglesBundled': after,
               })
               print(f'build [{index}/{len(logical)}] {bone["id"]}: {before} -> {after} triangles')
 
@@ -131,15 +126,12 @@ jobs:
               raise RuntimeError('invalid GLB magic')
 
           model_manifest = {
-              'source': 'BodyParts3D',
-              'sourceCommit': source_commit,
+              'source': 'BodyParts3D', 'sourceCommit': source_commit,
               'license': 'CC BY-SA 2.1 Japan',
               'logicalBoneCount': len(manifest_bones),
               'elementalMeshCount': len(all_ids),
-              'trianglesOriginal': total_before,
-              'trianglesBundled': total_after,
-              'glbBytes': len(glb),
-              'glbSha256': hashlib.sha256(glb).hexdigest(),
+              'trianglesOriginal': total_before, 'trianglesBundled': total_after,
+              'glbBytes': len(glb), 'glbSha256': hashlib.sha256(glb).hexdigest(),
               'bones': manifest_bones,
           }
           Path('out/model/model-manifest.json').write_text(
