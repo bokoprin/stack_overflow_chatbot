@@ -22,52 +22,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p android-smoke/app/project/assets
-          # Recover index.html directly from ZIP local-file headers. This does not depend on
-          # the optional central directory and therefore also validates the exact archived HTML.
-          python3 - <<'PY'
-          from pathlib import Path
-          import struct
-          import zlib
-
-          source = Path('android-smoke/source.zip').read_bytes()
-          wanted = 'project/assets/index.html'
-          offset = 0
-          extracted = False
-          while True:
-              header = source.find(b'PK\x03\x04', offset)
-              if header < 0:
-                  break
-              if header + 30 > len(source):
-                  break
-              _, _, flags, method, _, _, _, compressed_size, uncompressed_size, name_len, extra_len = struct.unpack_from(
-                  '<IHHHHHIIIHH', source, header
-              )
-              name_start = header + 30
-              name_end = name_start + name_len
-              data_start = name_end + extra_len
-              data_end = data_start + compressed_size
-              if data_end > len(source):
-                  raise RuntimeError(f'truncated entry: {source[name_start:name_end]!r}')
-              name = source[name_start:name_end].decode('utf-8')
-              if flags & 0x08:
-                  raise RuntimeError(f'unsupported data descriptor: {name}')
-              if name == wanted:
-                  payload = source[data_start:data_end]
-                  if method == 8:
-                      payload = zlib.decompress(payload, -15)
-                  elif method != 0:
-                      raise RuntimeError(f'unsupported compression method {method}')
-                  if len(payload) != uncompressed_size:
-                      raise RuntimeError(f'size mismatch: {len(payload)} != {uncompressed_size}')
-                  target = Path('android-smoke/app') / wanted
-                  target.parent.mkdir(parents=True, exist_ok=True)
-                  target.write_bytes(payload)
-                  extracted = True
-                  break
-              offset = data_end
-          if not extracted:
-              raise RuntimeError('index.html was not found in temporary source archive')
-          PY
+          cat android-smoke/html-parts/*.part > android-smoke/app/project/assets/index.html
+          echo '77e3d986ea5d6cb9f58a6d1b48b496eca218e7013fe422e26b104ba61151b3cc  android-smoke/app/project/assets/index.html' | sha256sum -c -
           gh run download 30434735489 -n skeleton-glb-assets -D /tmp/glb
           gh run download 30435379719 -n three-runtime-r185 -D /tmp/three
           mkdir -p android-smoke/app/project/assets/model android-smoke/app/project/assets/js
