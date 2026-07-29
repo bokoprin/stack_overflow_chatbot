@@ -21,13 +21,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p android-smoke/app
-          unzip -q android-smoke/source.zip -d android-smoke/app
+          mkdir -p android-smoke/app/project/assets
+          # The temporary binary was uploaded through the Git data API. If its central directory
+          # is unavailable, scan local file headers and reconstruct a readable archive.
+          zip -FF android-smoke/source.zip --out /tmp/recovered-source.zip >/tmp/zip-repair.log 2>&1 || true
+          if unzip -tq /tmp/recovered-source.zip >/dev/null 2>&1; then
+            unzip -qo /tmp/recovered-source.zip 'project/assets/index.html' -d android-smoke/app
+          else
+            echo 'Unable to recover source archive'
+            cat /tmp/zip-repair.log || true
+            exit 1
+          fi
           gh run download 30434735489 -n skeleton-glb-assets -D /tmp/glb
           gh run download 30435379719 -n three-runtime-r185 -D /tmp/three
           mkdir -p android-smoke/app/project/assets/model android-smoke/app/project/assets/js
           cp -a /tmp/glb/model/. android-smoke/app/project/assets/model/
           cp -a /tmp/three/js/. android-smoke/app/project/assets/js/
+          test -s android-smoke/app/project/AndroidManifest.xml
+          test -s android-smoke/app/project/src/jp/openai/upperskeleton/MainActivity.java
+          test -s android-smoke/app/project/assets/index.html
           test -s android-smoke/app/project/assets/model/full_skeleton.glb
           test -s android-smoke/app/project/assets/js/three.module.js
 
