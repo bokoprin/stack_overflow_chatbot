@@ -1,0 +1,149 @@
+name: Build BodyParts3D bone and muscle GLB
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download BodyParts3D Release 4.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p work out
+          base='https://dbarchive.biosciencedbc.jp/data/bodyparts3d/LATEST'
+          curl -fL --retry 4 --retry-delay 3 "$base/isa_element_parts.txt" -o work/isa_element_parts.txt
+          curl -fL --retry 4 --retry-delay 3 "$base/isa_BP3D_4.0_obj_99.zip" -o work/isa_BP3D_4.0_obj_99.zip
+      - name: Install mesh tools
+        shell: bash
+        run: python3 -m pip install --disable-pip-version-check trimesh==4.8.1 numpy==2.3.2
+      - name: Convert selected meshes
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from __future__ import annotations
+          import io, json, hashlib, zipfile
+          from pathlib import Path
+          import numpy as np
+          import trimesh
+
+          root = Path('.')
+          out = root / 'out'
+          out.mkdir(exist_ok=True)
+          bone_map = json.loads((root/'muscle-atlas/bone-fma-map.json').read_text(encoding='utf-8'))['bones']
+          muscle_map = json.loads((root/'muscle-atlas/muscle-mesh-map.json').read_text(encoding='utf-8'))['muscles']
+
+          concept_elements: dict[str, list[str]] = {}
+          with (root/'work/isa_element_parts.txt').open(encoding='utf-8') as f:
+              next(f)
+              for line in f:
+                  cols = line.rstrip('\n').split('\t')
+                  if len(cols) >= 3:
+                      concept_elements.setdefault(cols[0], []).append(cols[2])
+
+          zf = zipfile.ZipFile(root/'work/isa_BP3D_4.0_obj_99.zip')
+          by_basename = {Path(name).name.lower(): name for name in zf.namelist() if name.lower().endswith('.obj')}
+          mesh_cache: dict[str, trimesh.Trimesh] = {}
+
+          def load_element(element_id: str) -> trimesh.Trimesh:
+              if element_id in mesh_cache:
+                  return mesh_cache[element_id].copy()
+              archive_name = by_basename.get(f'{element_id}.obj'.lower())
+              if not archive_name:
+                  raise FileNotFoundError(f'OBJ not found for {element_id}')
+              raw = zf.read(archive_name)
+              loaded = trimesh.load(io.BytesIO(raw), file_type='obj', process=False, maintain_order=True)
+              if isinstance(loaded, trimesh.Scene):
+                  geometries = [g for g in loaded.geometry.values() if isinstance(g, trimesh.Trimesh)]
+                  if not geometries:
+                      raise RuntimeError(f'No geometry in {element_id}')
+                  mesh = trimesh.util.concatenate(geometries)
+              else:
+                  mesh = loaded
+              mesh.remove_unreferenced_vertices()
+              mesh.fix_normals(multibody=True)
+              mesh_cache[element_id] = mesh.copy()
+              return mesh
+
+          def combined(element_ids: list[str]) -> trimesh.Trimesh:
+              unique = list(dict.fromkeys(element_ids))
+              pieces = [load_element(eid) for eid in unique]
+              mesh = pieces[0].copy() if len(pieces) == 1 else trimesh.util.concatenate(pieces)
+              mesh.remove_unreferenced_vertices()
+              mesh.fix_normals(multibody=True)
+              return mesh
+
+          def build_scene(records: list[dict], element_resolver, filename: str, kind: str):
+              scene = trimesh.Scene()
+              manifest_records = []
+              total_faces = 0
+              missing = []
+              for record in records:
+                  element_ids = element_resolver(record)
+                  if not element_ids:
+                      missing.append(record['id'])
+                      continue
+                  try:
+                      mesh = combined(element_ids)
+                  except Exception as exc:
+                      raise RuntimeError(f"{kind} {record['id']} failed: {exc}") from exc
+                  mesh.visual = trimesh.visual.ColorVisuals(mesh=mesh, face_colors=[220, 90, 82, 255] if kind == 'muscle' else [234, 223, 202, 255])
+                  scene.add_geometry(mesh, node_name=record['id'], geom_name=record['id'])
+                  faces = int(len(mesh.faces))
+                  total_faces += faces
+                  manifest_records.append({'id': record['id'], 'elementIds': element_ids, 'triangles': faces, **({'layer': record['layer']} if 'layer' in record else {})})
+              if missing:
+                  raise RuntimeError(f'Missing {kind} mappings: {missing}')
+              glb = scene.export(file_type='glb')
+              target = out / filename
+              target.write_bytes(glb)
+              digest = hashlib.sha256(glb).hexdigest()
+              manifest = {
+                  'source': 'BodyParts3D Release 4.0',
+                  'license': 'CC BY 4.0',
+                  'kind': kind,
+                  'logicalCount': len(manifest_records),
+                  'triangles': total_faces,
+                  'bytes': len(glb),
+                  'sha256': digest,
+                  'records': manifest_records,
+              }
+              (out / filename.replace('.glb', '-manifest.json')).write_text(json.dumps(manifest, indent=2), encoding='utf-8')
+              print(filename, len(manifest_records), total_faces, len(glb), digest)
+
+          def bone_elements(record):
+              result = []
+              for concept in record['conceptIds']:
+                  result.extend(concept_elements.get(concept, []))
+              return list(dict.fromkeys(result))
+
+          build_scene(bone_map, bone_elements, 'full_skeleton_v4.glb', 'bone')
+          build_scene(muscle_map, lambda r: r['elementIds'], 'full_muscles_v4.glb', 'muscle')
+          PY
+      - name: Validate generated assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s out/full_skeleton_v4.glb
+          test -s out/full_muscles_v4.glb
+          python3 - <<'PY'
+          import json
+          for name, expected in [('full_skeleton_v4-manifest.json',75),('full_muscles_v4-manifest.json',104)]:
+              data=json.load(open('out/'+name))
+              assert data['logicalCount']==expected, data
+              assert data['triangles']>10000, data
+              assert len(data['sha256'])==64
+          print('PASS anatomy assets')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bodyparts3d-bone-muscle-glb
+          path: out
+          compression-level: 6
