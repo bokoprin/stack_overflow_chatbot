@@ -4,7 +4,16 @@ set -eu
 RESULTS=android-smoke/results
 PACKAGE=jp.openai.upperskeleton.fixed2
 ACTIVITY=jp.openai.upperskeleton.MainActivity
+COMPONENT="$PACKAGE/$ACTIVITY"
 mkdir -p "$RESULTS"
+
+# 高精細モデルの読み込み待ち中にエミュレータ画面が消灯し、
+# screencapが全面黒になることを防ぐ。
+adb shell svc power stayon true || true
+adb shell settings put system screen_off_timeout 2147483647 || true
+adb shell input keyevent 224 || true
+adb shell wm dismiss-keyguard || true
+adb shell input keyevent 82 || true
 
 # GitHub Actions上の低速エミュレータでSystem UIのANRダイアログが
 # アプリ画面へ重ならないよう、OS側のエラーダイアログ表示を抑制する。
@@ -14,7 +23,7 @@ adb shell settings put global anr_show_background 0 || true
 adb shell settings put secure anr_show_background 0 || true
 adb logcat -c
 adb install -r "$APK"
-adb shell am start -W -n "$PACKAGE/$ACTIVITY" > "$RESULTS/start.txt" || true
+adb shell am start -W -n "$COMPONENT" > "$RESULTS/start.txt" || true
 
 wait_for_log() {
   pattern="$1"
@@ -37,8 +46,19 @@ wait_for_log() {
   return 1
 }
 
+wake_and_foreground() {
+  adb shell input keyevent 224 || true
+  adb shell wm dismiss-keyguard || true
+  adb shell input keyevent 82 || true
+  adb shell am start -n "$COMPONENT" >/dev/null 2>&1 || true
+  sleep 2
+  adb shell dumpsys power > "$RESULTS/power.txt" || true
+  adb shell dumpsys window > "$RESULTS/window-state.txt" || true
+}
+
 prepare_clean_screen() {
   name="$1"
+  wake_and_foreground
   attempt=0
   while [ "$attempt" -lt 3 ]; do
     adb shell uiautomator dump /sdcard/window.xml >/dev/null 2>&1 || true
@@ -48,10 +68,10 @@ prepare_clean_screen() {
     fi
 
     # Pixel 2エミュレータのANRダイアログで「Wait」を選択する。
-    # System UIを終了せず待機を選び、アプリの描画面へ戻す。
     echo "Dismissing System UI ANR dialog before $name screenshot"
     adb shell input tap 540 1058 || true
     sleep 6
+    wake_and_foreground
     attempt=$((attempt + 1))
   done
 
@@ -66,19 +86,16 @@ prepare_clean_screen() {
 
 wait_for_log 'ANDROID_BONES_ONLY'
 grep -q 'ANDROID_BONES_ONLY selection=bone display=bones-only bones=75 muscles=0' "$RESULTS/webview.txt"
-sleep 3
 prepare_clean_screen bones-only
 adb exec-out screencap -p > "$RESULTS/bones-only.png"
 
 wait_for_log 'ANDROID_MUSCLES_ONLY'
 grep -q 'ANDROID_MUSCLES_ONLY selection=muscle display=muscles-only bones=0 muscles=104' "$RESULTS/webview.txt"
-sleep 3
 prepare_clean_screen muscles-only
 adb exec-out screencap -p > "$RESULTS/muscles-only.png"
 
 wait_for_log 'ANDROID_DISPLAY_DONE'
 grep -q 'ANDROID_DISPLAY_DONE selection=bone display=related related=true' "$RESULTS/webview.txt"
-sleep 3
 prepare_clean_screen related
 adb exec-out screencap -p > "$RESULTS/related.png"
 
