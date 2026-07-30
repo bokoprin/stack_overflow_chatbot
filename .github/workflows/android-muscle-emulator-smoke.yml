@@ -47,7 +47,7 @@ jobs:
           import * as THREE from './js/three.module.js';import{GLTFLoader}from'./js/loaders/GLTFLoader.js';
           async function main(){
             const host=document.querySelector('#v'),status=document.querySelector('#s');
-            const scene=new THREE.Scene();const camera=new THREE.PerspectiveCamera(40,innerWidth/innerHeight,.1,100);camera.position.set(0,0,-18);
+            const scene=new THREE.Scene();const camera=new THREE.PerspectiveCamera(40,innerWidth/innerHeight,.1,100);camera.position.set(0,0,-18);camera.lookAt(0,0,0);
             const renderer=new THREE.WebGLRenderer({antialias:false,powerPreference:'default',preserveDrawingBuffer:true});renderer.setPixelRatio(1);renderer.setSize(innerWidth,innerHeight);renderer.outputEncoding=THREE.sRGBEncoding;renderer.toneMapping=THREE.NoToneMapping;renderer.physicallyCorrectLights=false;host.appendChild(renderer.domElement);
             scene.add(new THREE.AmbientLight(0xffffff,.22));scene.add(new THREE.HemisphereLight(0xffffff,0x60758a,.52));
             const key=new THREE.DirectionalLight(0xfff8eb,.72);key.position.set(-5,8,-8);scene.add(key);const fill=new THREE.DirectionalLight(0xc5e8ff,.32);fill.position.set(7,3,7);scene.add(fill);const front=new THREE.DirectionalLight(0xffffff,.20);front.position.set(0,2,-10);scene.add(front);
@@ -65,9 +65,10 @@ jobs:
               const gl=renderer.getContext(),w=gl.drawingBufferWidth,h=gl.drawingBufferHeight;
               const x=Math.floor(w*.15),y=Math.floor(h*.18),sw=Math.max(1,Math.floor(w*.70)),sh=Math.max(1,Math.floor(h*.64));
               const pixels=new Uint8Array(sw*sh*4);gl.readPixels(x,y,sw,sh,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
-              const values=[];let bright=0;
-              for(let i=0;i<pixels.length;i+=4){const l=.2126*pixels[i]+.7152*pixels[i+1]+.0722*pixels[i+2];values.push(l);if(l>=85)bright++}
-              values.sort((a,b)=>a-b);const p95=values[Math.min(values.length-1,Math.floor(values.length*.95))]||0;const fraction=values.length?bright/values.length:0;const pass=p95>=minP95&&fraction>=minFraction;
+              const histogram=new Uint32Array(256);let bright=0,samples=0;
+              for(let i=0;i<pixels.length;i+=4){const l=Math.max(0,Math.min(255,Math.round(.2126*pixels[i]+.7152*pixels[i+1]+.0722*pixels[i+2])));histogram[l]++;samples++;if(l>=85)bright++}
+              const target=Math.ceil(samples*.95);let cumulative=0,p95=0;for(let i=0;i<256;i++){cumulative+=histogram[i];if(cumulative>=target){p95=i;break}}
+              const fraction=samples?bright/samples:0;const pass=p95>=minP95&&fraction>=minFraction;
               console.info(`ANDROID_FRAME_STATS mode=${mode} p95=${p95.toFixed(2)} bright=${fraction.toFixed(4)} pass=${pass} width=${w} height=${h}`);
               if(!pass)console.error(`ANDROID_ANATOMY_ERROR framebuffer-dark mode=${mode} p95=${p95.toFixed(2)} bright=${fraction.toFixed(4)}`);
               return pass;
