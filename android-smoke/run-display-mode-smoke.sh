@@ -7,16 +7,14 @@ ACTIVITY=jp.openai.upperskeleton.MainActivity
 COMPONENT="$PACKAGE/$ACTIVITY"
 mkdir -p "$RESULTS"
 
-# 高精細モデルの読み込み待ち中にエミュレータ画面が消灯し、
-# screencapが全面黒になることを防ぐ。
+# 高精細モデルの読み込み待ち中にエミュレータ画面が消灯しないようにする。
 adb shell svc power stayon true || true
 adb shell settings put system screen_off_timeout 2147483647 || true
 adb shell input keyevent 224 || true
 adb shell wm dismiss-keyguard || true
 adb shell input keyevent 82 || true
 
-# GitHub Actions上の低速エミュレータでSystem UIのANRダイアログが
-# アプリ画面へ重ならないよう、OS側のエラーダイアログ表示を抑制する。
+# 低速エミュレータでSystem UIのANRダイアログが重ならないよう抑制する。
 adb shell settings put global show_first_crash_dialog 0 || true
 adb shell settings put global hide_error_dialogs 1 || true
 adb shell settings put global anr_show_background 0 || true
@@ -47,7 +45,7 @@ wait_for_log() {
 }
 
 wake_screen() {
-  # Activityを再起動すると表示モードが初期化されるため、画面の点灯とロック解除だけを行う。
+  # Activityは再起動せず、表示モードを保ったまま画面だけを点灯する。
   adb shell input keyevent 224 || true
   adb shell wm dismiss-keyguard || true
   adb shell input keyevent 82 || true
@@ -66,15 +64,12 @@ prepare_clean_screen() {
     if [ ! -s "$RESULTS/$name-window.xml" ] || ! grep -Eqi "isn.t responding|not responding|応答していません|System UI.*respond" "$RESULTS/$name-window.xml"; then
       return 0
     fi
-
-    # Pixel 2エミュレータのANRダイアログで「Wait」を選択する。
     echo "Dismissing System UI ANR dialog before $name screenshot"
     adb shell input tap 540 1058 || true
     sleep 6
     wake_screen
     attempt=$((attempt + 1))
   done
-
   adb shell uiautomator dump /sdcard/window.xml >/dev/null 2>&1 || true
   adb pull /sdcard/window.xml "$RESULTS/$name-window.xml" >/dev/null 2>&1 || true
   if [ -s "$RESULTS/$name-window.xml" ] && grep -Eqi "isn.t responding|not responding|応答していません|System UI.*respond" "$RESULTS/$name-window.xml"; then
@@ -84,18 +79,18 @@ prepare_clean_screen() {
   fi
 }
 
-wait_for_log 'ANDROID_BONES_ONLY'
-grep -q 'ANDROID_BONES_ONLY selection=bone display=bones-only bones=75 muscles=0' "$RESULTS/webview.txt"
+wait_for_log 'ANDROID_FRAME_STATS mode=bones-only'
+grep -E 'ANDROID_FRAME_STATS mode=bones-only .*pass=true' "$RESULTS/webview.txt"
 prepare_clean_screen bones-only
 adb exec-out screencap -p > "$RESULTS/bones-only.png"
 
-wait_for_log 'ANDROID_MUSCLES_ONLY'
-grep -q 'ANDROID_MUSCLES_ONLY selection=muscle display=muscles-only bones=0 muscles=104' "$RESULTS/webview.txt"
+wait_for_log 'ANDROID_FRAME_STATS mode=muscles-only'
+grep -E 'ANDROID_FRAME_STATS mode=muscles-only .*pass=true' "$RESULTS/webview.txt"
 prepare_clean_screen muscles-only
 adb exec-out screencap -p > "$RESULTS/muscles-only.png"
 
-wait_for_log 'ANDROID_DISPLAY_DONE'
-grep -q 'ANDROID_DISPLAY_DONE selection=bone display=related related=true' "$RESULTS/webview.txt"
+wait_for_log 'ANDROID_FRAME_STATS mode=related'
+grep -E 'ANDROID_FRAME_STATS mode=related .*pass=true' "$RESULTS/webview.txt"
 prepare_clean_screen related
 adb exec-out screencap -p > "$RESULTS/related.png"
 
