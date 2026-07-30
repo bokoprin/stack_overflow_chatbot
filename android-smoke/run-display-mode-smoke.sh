@@ -46,11 +46,11 @@ wait_for_log() {
   return 1
 }
 
-wake_and_foreground() {
+wake_screen() {
+  # Activityを再起動すると表示モードが初期化されるため、画面の点灯とロック解除だけを行う。
   adb shell input keyevent 224 || true
   adb shell wm dismiss-keyguard || true
   adb shell input keyevent 82 || true
-  adb shell am start -n "$COMPONENT" >/dev/null 2>&1 || true
   sleep 2
   adb shell dumpsys power > "$RESULTS/power.txt" || true
   adb shell dumpsys window > "$RESULTS/window-state.txt" || true
@@ -58,7 +58,7 @@ wake_and_foreground() {
 
 prepare_clean_screen() {
   name="$1"
-  wake_and_foreground
+  wake_screen
   attempt=0
   while [ "$attempt" -lt 3 ]; do
     adb shell uiautomator dump /sdcard/window.xml >/dev/null 2>&1 || true
@@ -71,7 +71,7 @@ prepare_clean_screen() {
     echo "Dismissing System UI ANR dialog before $name screenshot"
     adb shell input tap 540 1058 || true
     sleep 6
-    wake_and_foreground
+    wake_screen
     attempt=$((attempt + 1))
   done
 
