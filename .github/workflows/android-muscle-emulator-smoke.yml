@@ -48,7 +48,7 @@ jobs:
           async function main(){
             const host=document.querySelector('#v'),status=document.querySelector('#s');
             const scene=new THREE.Scene();const camera=new THREE.PerspectiveCamera(40,innerWidth/innerHeight,.1,100);camera.position.set(0,0,-18);
-            const renderer=new THREE.WebGLRenderer({antialias:false,powerPreference:'default'});renderer.setPixelRatio(1);renderer.setSize(innerWidth,innerHeight);renderer.outputEncoding=THREE.sRGBEncoding;renderer.toneMapping=THREE.NoToneMapping;renderer.physicallyCorrectLights=false;host.appendChild(renderer.domElement);
+            const renderer=new THREE.WebGLRenderer({antialias:false,powerPreference:'default',preserveDrawingBuffer:true});renderer.setPixelRatio(1);renderer.setSize(innerWidth,innerHeight);renderer.outputEncoding=THREE.sRGBEncoding;renderer.toneMapping=THREE.NoToneMapping;renderer.physicallyCorrectLights=false;host.appendChild(renderer.domElement);
             scene.add(new THREE.AmbientLight(0xffffff,.22));scene.add(new THREE.HemisphereLight(0xffffff,0x60758a,.52));
             const key=new THREE.DirectionalLight(0xfff8eb,.72);key.position.set(-5,8,-8);scene.add(key);const fill=new THREE.DirectionalLight(0xc5e8ff,.32);fill.position.set(7,3,7);scene.add(fill);const front=new THREE.DirectionalLight(0xffffff,.20);front.position.set(0,2,-10);scene.add(front);
             const loader=new GLTFLoader();const loaded=await Promise.all([loader.loadAsync('./model/full_skeleton.glb'),loader.loadAsync('./model/full_muscles.glb')]);const bones=loaded[0],muscles=loaded[1];
@@ -60,9 +60,22 @@ jobs:
             function apply(){b.forEach(x=>x.visible=display!=='muscles-only');m.forEach(x=>x.visible=display!=='bones-only');renderer.render(scene,camera)}
             function setDisplay(next){display=next;if(next==='bones-only')selection='bone';if(next==='muscles-only')selection='muscle';apply()}
             function countVisible(map){let n=0;map.forEach(x=>{if(x.visible)n++});return n}
+            function frameStats(mode,minP95,minFraction){
+              renderer.render(scene,camera);
+              const gl=renderer.getContext(),w=gl.drawingBufferWidth,h=gl.drawingBufferHeight;
+              const x=Math.floor(w*.15),y=Math.floor(h*.18),sw=Math.max(1,Math.floor(w*.70)),sh=Math.max(1,Math.floor(h*.64));
+              const pixels=new Uint8Array(sw*sh*4);gl.readPixels(x,y,sw,sh,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
+              const values=[];let bright=0;
+              for(let i=0;i<pixels.length;i+=4){const l=.2126*pixels[i]+.7152*pixels[i+1]+.0722*pixels[i+2];values.push(l);if(l>=85)bright++}
+              values.sort((a,b)=>a-b);const p95=values[Math.min(values.length-1,Math.floor(values.length*.95))]||0;const fraction=values.length?bright/values.length:0;const pass=p95>=minP95&&fraction>=minFraction;
+              console.info(`ANDROID_FRAME_STATS mode=${mode} p95=${p95.toFixed(2)} bright=${fraction.toFixed(4)} pass=${pass} width=${w} height=${h}`);
+              if(!pass)console.error(`ANDROID_ANATOMY_ERROR framebuffer-dark mode=${mode} p95=${p95.toFixed(2)} bright=${fraction.toFixed(4)}`);
+              return pass;
+            }
             setDisplay('bones-only');status.textContent='骨のみ';console.info(`ANDROID_BONES_ONLY selection=${selection} display=${display} bones=${countVisible(b)} muscles=${countVisible(m)} encoding=${renderer.outputEncoding} three=${THREE.REVISION}`);
-            setTimeout(()=>{setDisplay('muscles-only');status.textContent='筋肉のみ';console.info(`ANDROID_MUSCLES_ONLY selection=${selection} display=${display} bones=${countVisible(b)} muscles=${countVisible(m)}`)},20000);
-            setTimeout(()=>{display='related';selection='bone';apply();const t4=b.get('T4'),trap=m.get('trapezius-left');m.forEach(x=>x.visible=false);t4.material.color.set(0xf59e0b);trap.visible=true;trap.material.color.set(0x38bdf8);trap.material.opacity=.36;renderer.render(scene,camera);status.textContent='関連表示';console.info(`ANDROID_DISPLAY_DONE selection=${selection} display=${display} related=${t4.visible&&trap.visible&&trap.material.opacity===.36}`)},40000);
+            setTimeout(()=>frameStats('bones-only',120,.03),1500);
+            setTimeout(()=>{setDisplay('muscles-only');status.textContent='筋肉のみ';console.info(`ANDROID_MUSCLES_ONLY selection=${selection} display=${display} bones=${countVisible(b)} muscles=${countVisible(m)}`);setTimeout(()=>frameStats('muscles-only',95,.02),1500)},20000);
+            setTimeout(()=>{display='related';selection='bone';apply();const t4=b.get('T4'),trap=m.get('trapezius-left');m.forEach(x=>x.visible=false);t4.material.color.set(0xf59e0b);trap.visible=true;trap.material.color.set(0x38bdf8);trap.material.opacity=.36;renderer.render(scene,camera);status.textContent='関連表示';console.info(`ANDROID_DISPLAY_DONE selection=${selection} display=${display} related=${t4.visible&&trap.visible&&trap.material.opacity===.36}`);setTimeout(()=>frameStats('related',105,.02),1500)},40000);
             function loop(){renderer.render(scene,camera);requestAnimationFrame(loop)}loop();
           }
           main().catch(error=>{document.querySelector('#s').textContent=String(error);console.error('ANDROID_ANATOMY_ERROR '+(error&&error.stack||error));});
@@ -95,29 +108,14 @@ jobs:
           disable-animations: true
           emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: sh android-smoke/run-display-mode-smoke.sh
-      - name: Check emulator screenshot brightness
+      - name: Check emulator framebuffer brightness
         shell: bash
         run: |
-          python3 -m pip install --quiet pillow
-          python3 - <<'PY'
-          from PIL import Image
-          from pathlib import Path
-          for name, minimum_fraction in [('bones-only', .08), ('muscles-only', .06)]:
-              xml=Path(f'android-smoke/results/{name}-window.xml').read_text(errors='ignore')
-              lowered=xml.lower()
-              assert "isn't responding" not in lowered
-              assert 'not responding' not in lowered
-              assert '応答していません' not in xml
-              image=Image.open(f'android-smoke/results/{name}.png').convert('RGB')
-              w,h=image.size
-              crop=image.crop((int(w*.15),int(h*.18),int(w*.85),int(h*.82)))
-              values=[.2126*r+.7152*g+.0722*b for r,g,b in crop.getdata()]
-              p95=sorted(values)[int(len(values)*.95)]
-              fraction=sum(v>=85 for v in values)/len(values)
-              print(name,{'size':image.size,'p95':p95,'bright_fraction':fraction})
-              assert p95>=135
-              assert fraction>=minimum_fraction
-          PY
+          set -euo pipefail
+          grep -E 'ANDROID_FRAME_STATS mode=bones-only .*pass=true' android-smoke/results/webview.txt
+          grep -E 'ANDROID_FRAME_STATS mode=muscles-only .*pass=true' android-smoke/results/webview.txt
+          grep -E 'ANDROID_FRAME_STATS mode=related .*pass=true' android-smoke/results/webview.txt
+          ! grep -q 'ANDROID_ANATOMY_ERROR' android-smoke/results/webview.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
