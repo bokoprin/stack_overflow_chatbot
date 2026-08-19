@@ -1,0 +1,45 @@
+name: Temporary Rust 1.97.1 bootstrap
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-toolchain:
+    if: github.head_ref == 'chatgpt-rust-bootstrap-20260819'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Install exact Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.97.1 --profile minimal --component clippy --component rustfmt
+          TOOLCHAIN_DIR="$(dirname "$(dirname "$(rustup which --toolchain 1.97.1 rustc)")")"
+          echo "TOOLCHAIN_DIR=$TOOLCHAIN_DIR" >> "$GITHUB_ENV"
+          "$TOOLCHAIN_DIR/bin/rustc" --version
+          "$TOOLCHAIN_DIR/bin/cargo" --version
+          "$TOOLCHAIN_DIR/bin/clippy-driver" --version
+          "$TOOLCHAIN_DIR/bin/rustfmt" --version
+
+      - name: Pack portable toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/chatgpt-rust-bootstrap"
+          tar -C "$(dirname "$TOOLCHAIN_DIR")" -czf "$RUNNER_TEMP/chatgpt-rust-bootstrap/rust-1.97.1-x86_64-unknown-linux-gnu.tar.gz" "$(basename "$TOOLCHAIN_DIR")"
+          sha256sum "$RUNNER_TEMP/chatgpt-rust-bootstrap/rust-1.97.1-x86_64-unknown-linux-gnu.tar.gz" > "$RUNNER_TEMP/chatgpt-rust-bootstrap/rust-1.97.1-x86_64-unknown-linux-gnu.tar.gz.sha256"
+          ls -lh "$RUNNER_TEMP/chatgpt-rust-bootstrap"
+
+      - name: Upload portable toolchain
+        uses: actions/upload-artifact@v4
+        with:
+          name: chatgpt-rust-1.97.1-linux-x64
+          path: ${{ runner.temp }}/chatgpt-rust-bootstrap/*
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
